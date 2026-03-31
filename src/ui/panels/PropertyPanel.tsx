@@ -2,14 +2,18 @@ import React from 'react';
 import { useProjectStore } from '../../state/projectStore';
 import { useSelectionStore } from '../../state/selectionStore';
 import { useViewStore } from '../../state/viewStore';
-import type { StructuralNode, Member } from '../../core/model/types';
+import type { StructuralNode, Member, NodalLoad, MemberLoad } from '../../core/model/types';
 
 export const PropertyPanel: React.FC = () => {
   const model = useProjectStore((s) => s.model);
   const updateNode = useProjectStore((s) => s.updateNode);
   const updateMember = useProjectStore((s) => s.updateMember);
   const addNodalLoad = useProjectStore((s) => s.addNodalLoad);
+  const updateNodalLoad = useProjectStore((s) => s.updateNodalLoad);
+  const removeNodalLoad = useProjectStore((s) => s.removeNodalLoad);
   const addMemberLoad = useProjectStore((s) => s.addMemberLoad);
+  const updateMemberLoad = useProjectStore((s) => s.updateMemberLoad);
+  const removeMemberLoad = useProjectStore((s) => s.removeMemberLoad);
   const removeNode = useProjectStore((s) => s.removeNode);
   const removeMember = useProjectStore((s) => s.removeMember);
 
@@ -39,9 +43,12 @@ export const PropertyPanel: React.FC = () => {
       {selectedNodes.length === 1 && (
         <NodeProperties
           node={selectedNodes[0]!}
+          nodalLoads={model.nodalLoads.filter((l) => l.nodeId === selectedNodes[0]!.id)}
           onUpdate={updateNode}
           onDelete={removeNode}
           onAddLoad={(nodeId) => addNodalLoad({ nodeId, fx: 0, fy: -10, mz: 0 })}
+          onUpdateLoad={updateNodalLoad}
+          onRemoveLoad={removeNodalLoad}
         />
       )}
 
@@ -49,11 +56,14 @@ export const PropertyPanel: React.FC = () => {
         <MemberProperties
           member={selectedMembers[0]!}
           model={model}
+          memberLoads={model.memberLoads.filter((l) => l.memberId === selectedMembers[0]!.id)}
           onUpdate={updateMember}
           onDelete={removeMember}
           onAddLoad={(memberId) =>
             addMemberLoad({ memberId, type: 'udl', direction: 'localY', value: -5 })
           }
+          onUpdateLoad={updateMemberLoad}
+          onRemoveLoad={removeMemberLoad}
         />
       )}
 
@@ -107,10 +117,13 @@ export const PropertyPanel: React.FC = () => {
 
 const NodeProperties: React.FC<{
   node: StructuralNode;
+  nodalLoads: NodalLoad[];
   onUpdate: (id: string, u: Partial<Pick<StructuralNode, 'x' | 'y' | 'restraint'>>) => void;
   onDelete: (id: string) => void;
   onAddLoad: (nodeId: string) => void;
-}> = ({ node, onUpdate, onDelete, onAddLoad }) => {
+  onUpdateLoad: (id: string, updates: Partial<Omit<NodalLoad, 'id'>>) => void;
+  onRemoveLoad: (id: string) => void;
+}> = ({ node, nodalLoads, onUpdate, onDelete, onAddLoad, onUpdateLoad, onRemoveLoad }) => {
   return (
     <div className="prop-group">
       <div className="prop-title">節点 {node.id.substring(0, 5)}</div>
@@ -163,6 +176,43 @@ const NodeProperties: React.FC<{
         />
         回転 (rz)
       </label>
+      {nodalLoads.length > 0 && (
+        <>
+          <div className="prop-title">節点荷重</div>
+          {nodalLoads.map((load) => (
+            <div key={load.id} className="load-item">
+              <div className="prop-row">
+                <label>Fx:</label>
+                <input
+                  type="number"
+                  value={load.fx}
+                  step="1"
+                  onChange={(e) => onUpdateLoad(load.id, { fx: Number(e.target.value) })}
+                />
+              </div>
+              <div className="prop-row">
+                <label>Fy:</label>
+                <input
+                  type="number"
+                  value={load.fy}
+                  step="1"
+                  onChange={(e) => onUpdateLoad(load.id, { fy: Number(e.target.value) })}
+                />
+              </div>
+              <div className="prop-row">
+                <label>Mz:</label>
+                <input
+                  type="number"
+                  value={load.mz}
+                  step="1"
+                  onChange={(e) => onUpdateLoad(load.id, { mz: Number(e.target.value) })}
+                />
+              </div>
+              <button className="danger small" onClick={() => onRemoveLoad(load.id)}>荷重削除</button>
+            </div>
+          ))}
+        </>
+      )}
       <div className="prop-actions">
         <button onClick={() => onAddLoad(node.id)}>荷重追加</button>
         <button className="danger" onClick={() => onDelete(node.id)}>削除</button>
@@ -174,10 +224,13 @@ const NodeProperties: React.FC<{
 const MemberProperties: React.FC<{
   member: Member;
   model: import('../../core/model/types').ProjectModel;
+  memberLoads: MemberLoad[];
   onUpdate: (id: string, u: Partial<Pick<Member, 'materialId' | 'sectionId'>>) => void;
   onDelete: (id: string) => void;
   onAddLoad: (memberId: string) => void;
-}> = ({ member, model, onUpdate, onDelete, onAddLoad }) => {
+  onUpdateLoad: (id: string, updates: Partial<Omit<MemberLoad, 'id'>>) => void;
+  onRemoveLoad: (id: string) => void;
+}> = ({ member, model, memberLoads, onUpdate, onDelete, onAddLoad, onUpdateLoad, onRemoveLoad }) => {
   const ni = model.nodes.find((n) => n.id === member.ni);
   const nj = model.nodes.find((n) => n.id === member.nj);
   const L = ni && nj ? Math.sqrt((nj.x - ni.x) ** 2 + (nj.y - ni.y) ** 2) : 0;
@@ -211,6 +264,65 @@ const MemberProperties: React.FC<{
           ))}
         </select>
       </div>
+      {memberLoads.length > 0 && (
+        <>
+          <div className="prop-title">部材荷重</div>
+          {memberLoads.map((load) => (
+            <div key={load.id} className="load-item">
+              <div className="prop-row">
+                <label>種類:</label>
+                <select
+                  value={load.type}
+                  onChange={(e) => {
+                    const newType = e.target.value as 'udl' | 'point';
+                    if (newType === 'point') {
+                      onUpdateLoad(load.id, { type: 'point', a: 0 } as Partial<Omit<MemberLoad, 'id'>>);
+                    } else {
+                      onUpdateLoad(load.id, { type: 'udl' } as Partial<Omit<MemberLoad, 'id'>>);
+                    }
+                  }}
+                >
+                  <option value="udl">等分布</option>
+                  <option value="point">集中</option>
+                </select>
+              </div>
+              <div className="prop-row">
+                <label>方向:</label>
+                <select
+                  value={load.direction}
+                  onChange={(e) => onUpdateLoad(load.id, { direction: e.target.value as 'localX' | 'localY' })}
+                >
+                  <option value="localY">localY</option>
+                  <option value="localX">localX</option>
+                </select>
+              </div>
+              <div className="prop-row">
+                <label>{load.type === 'udl' ? '強度:' : '大きさ:'}</label>
+                <input
+                  type="number"
+                  value={load.value}
+                  step="1"
+                  onChange={(e) => onUpdateLoad(load.id, { value: Number(e.target.value) })}
+                />
+              </div>
+              {load.type === 'point' && (
+                <div className="prop-row">
+                  <label>位置 a:</label>
+                  <input
+                    type="number"
+                    value={load.a}
+                    step="0.1"
+                    min="0"
+                    max={L}
+                    onChange={(e) => onUpdateLoad(load.id, { a: Number(e.target.value) })}
+                  />
+                </div>
+              )}
+              <button className="danger small" onClick={() => onRemoveLoad(load.id)}>荷重削除</button>
+            </div>
+          ))}
+        </>
+      )}
       <div className="prop-actions">
         <button onClick={() => onAddLoad(member.id)}>荷重追加</button>
         <button className="danger" onClick={() => onDelete(member.id)}>削除</button>

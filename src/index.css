@@ -358,3 +358,29 @@ input[type="range"] {
 .warnings {
   margin-top: 8px;
 }
+
+/* Load items */
+.load-item {
+  padding: 6px;
+  margin-bottom: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.load-item button.danger.small {
+  width: 100%;
+  padding: 3px 6px;
+  margin-top: 4px;
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.load-item button.danger.small:hover {
+  background: var(--danger);
+  color: var(--bg-overlay);
+}

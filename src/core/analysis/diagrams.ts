@@ -115,8 +115,8 @@ export function generateDiagram(
     // Internal forces from equilibrium at section x (measured from i-end)
     // Using i-end reactions and applied loads
 
-    // Axial force: N(x) = -Nxi + integral of qx dx + sum of Px applied before x
-    let N = -Nxi;
+    // Axial force: N(x) = Nxi + integral of qx dx + sum of Px applied before x
+    let N = Nxi;
     for (const udl of axialUDLs) {
       if (udl.type === 'udl') {
         N += udl.value * x;
@@ -128,8 +128,8 @@ export function generateDiagram(
       }
     }
 
-    // Shear force: V(x) = -Vyi + integral of qy dx + sum of Py applied before x
-    let V = -Vyi;
+    // Shear force: V(x) = Vyi + integral of qy dx + sum of Py applied before x
+    let V = Vyi;
     for (const udl of transverseUDLs) {
       if (udl.type === 'udl') {
         V += udl.value * x;
@@ -141,8 +141,8 @@ export function generateDiagram(
       }
     }
 
-    // Bending moment: M(x) = -Mzi + Vyi*x - integral of qy*x dx - sum of Py*(x-a)
-    let M = -Mzi + Vyi * x;
+    // Bending moment: M(x) = Mzi - Vyi*x - integral of qy*x dx - sum of Py*(x-a)
+    let M = Mzi - Vyi * x;
     for (const udl of transverseUDLs) {
       if (udl.type === 'udl') {
         M -= (udl.value * x * x) / 2;

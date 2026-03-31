@@ -117,15 +117,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   removeNode: (id) => {
-    set((s) => ({
-      model: {
-        ...s.model,
-        nodes: s.model.nodes.filter((n) => n.id !== id),
-        members: s.model.members.filter((m) => m.ni !== id && m.nj !== id),
-        nodalLoads: s.model.nodalLoads.filter((l) => l.nodeId !== id),
-      },
-      isResultStale: true,
-    }));
+    set((s) => {
+      const removedMemberIds = new Set(
+        s.model.members.filter((m) => m.ni === id || m.nj === id).map((m) => m.id)
+      );
+      return {
+        model: {
+          ...s.model,
+          nodes: s.model.nodes.filter((n) => n.id !== id),
+          members: s.model.members.filter((m) => m.ni !== id && m.nj !== id),
+          nodalLoads: s.model.nodalLoads.filter((l) => l.nodeId !== id),
+          memberLoads: s.model.memberLoads.filter((l) => !removedMemberIds.has(l.memberId)),
+        },
+        isResultStale: true,
+      };
+    });
   },
 
   addMember: (ni, nj) => {

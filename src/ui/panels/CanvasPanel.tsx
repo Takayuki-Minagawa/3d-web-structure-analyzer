@@ -20,6 +20,8 @@ export const CanvasPanel: React.FC = () => {
   const addMember = useProjectStore((s) => s.addMember);
   const removeNode = useProjectStore((s) => s.removeNode);
   const removeMember = useProjectStore((s) => s.removeMember);
+  const addNodalLoad = useProjectStore((s) => s.addNodalLoad);
+  const addMemberLoad = useProjectStore((s) => s.addMemberLoad);
 
   const editTool = useViewStore((s) => s.editTool);
   const displayMode = useViewStore((s) => s.displayMode);
@@ -158,6 +160,18 @@ export const CanvasPanel: React.FC = () => {
           updateNode(hitNode.id, { restraint: { ux: false, uy: false, rz: false } });
         }
         selectNode(hitNode.id);
+      }
+    } else if (editTool === 'addNodalLoad') {
+      const hitNode = renderer.findNodeAt(x, y, model.nodes);
+      if (hitNode) {
+        addNodalLoad({ nodeId: hitNode.id, fx: 0, fy: -10, mz: 0 });
+        selectNode(hitNode.id);
+      }
+    } else if (editTool === 'addMemberLoad') {
+      const hitMember = renderer.findMemberAt(x, y, model);
+      if (hitMember) {
+        addMemberLoad({ memberId: hitMember.id, type: 'udl', direction: 'localY', value: -5 });
+        selectMember(hitMember.id);
       }
     }
   };
