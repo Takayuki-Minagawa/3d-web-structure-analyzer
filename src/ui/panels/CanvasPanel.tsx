@@ -248,7 +248,12 @@ export const CanvasPanel: React.FC = () => {
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      // Ignore key events when focus is on an input or select element
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
         for (const id of selectedNodeIds) removeNode(id);
         for (const id of selectedMemberIds) removeMember(id);
         clearSelection();

@@ -336,7 +336,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   markResultStale: () => set({ isResultStale: true }),
 
   loadModel: (model) => set({
-    model,
+    model: {
+      ...model,
+      units: model.units ?? { force: 'kN', length: 'm', moment: 'kN·m' },
+    },
     analysisResult: null,
     analysisError: null,
     isResultStale: false,
