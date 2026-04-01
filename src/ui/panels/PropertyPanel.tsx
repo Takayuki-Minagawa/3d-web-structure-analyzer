@@ -75,6 +75,7 @@ export const PropertyPanel: React.FC = () => {
           <UnitsEditor />
           <MaterialsEditor />
           <SectionsEditor />
+          <LoadsOverview />
           <div className="prop-group">
             <div className="prop-title">{t('prop.displaySettings')}</div>
             <label className="checkbox-label">
@@ -183,10 +184,11 @@ const NodeProperties: React.FC<{
         />
         {t('prop.rotation')}
       </label>
-      {nodalLoads.length > 0 && (
-        <>
-          <div className="prop-title">{t('prop.nodalLoads')}</div>
-          {nodalLoads.map((load) => (
+      <div className="prop-title">{t('prop.nodalLoads')}</div>
+      {nodalLoads.length === 0 && (
+        <div className="muted">{t('prop.noLoads')}</div>
+      )}
+      {nodalLoads.map((load) => (
             <div key={load.id} className="load-item">
               <div className="prop-row">
                 <label>Fx:</label>
@@ -218,8 +220,6 @@ const NodeProperties: React.FC<{
               <button className="danger small" onClick={() => onRemoveLoad(load.id)}>{t('prop.removeLoad')}</button>
             </div>
           ))}
-        </>
-      )}
       <div className="prop-actions">
         <button onClick={() => onAddLoad(node.id)}>{t('prop.addLoad')}</button>
         <button className="danger" onClick={() => onDelete(node.id)}>{t('prop.delete')}</button>
@@ -272,10 +272,11 @@ const MemberProperties: React.FC<{
           ))}
         </select>
       </div>
-      {memberLoads.length > 0 && (
-        <>
-          <div className="prop-title">{t('prop.memberLoads')}</div>
-          {memberLoads.map((load) => (
+      <div className="prop-title">{t('prop.memberLoads')}</div>
+      {memberLoads.length === 0 && (
+        <div className="muted">{t('prop.noLoads')}</div>
+      )}
+      {memberLoads.map((load) => (
             <div key={load.id} className="load-item">
               <div className="prop-row">
                 <label>{t('prop.loadType')}</label>
@@ -329,8 +330,6 @@ const MemberProperties: React.FC<{
               <button className="danger small" onClick={() => onRemoveLoad(load.id)}>{t('prop.removeLoad')}</button>
             </div>
           ))}
-        </>
-      )}
       <div className="prop-actions">
         <button onClick={() => onAddLoad(member.id)}>{t('prop.addLoad')}</button>
         <button className="danger" onClick={() => onDelete(member.id)}>{t('prop.delete')}</button>
@@ -472,6 +471,121 @@ const SectionsEditor: React.FC = () => {
         </button>
       </div>
     </div>
+  );
+};
+
+const LoadsOverview: React.FC = () => {
+  const model = useProjectStore((s) => s.model);
+  const updateNodalLoad = useProjectStore((s) => s.updateNodalLoad);
+  const removeNodalLoad = useProjectStore((s) => s.removeNodalLoad);
+  const updateMemberLoad = useProjectStore((s) => s.updateMemberLoad);
+  const removeMemberLoad = useProjectStore((s) => s.removeMemberLoad);
+  const selectNode = useSelectionStore((s) => s.selectNode);
+  const selectMember = useSelectionStore((s) => s.selectMember);
+  const t = useT();
+
+  const nodeLabel = (nodeId: string) => {
+    const idx = model.nodes.findIndex((n) => n.id === nodeId);
+    return idx >= 0 ? `N${idx}` : nodeId.substring(0, 5);
+  };
+  const memberLabel = (memberId: string) => {
+    const idx = model.members.findIndex((m) => m.id === memberId);
+    return idx >= 0 ? `M${idx}` : memberId.substring(0, 5);
+  };
+  const getMemberLength = (memberId: string) => {
+    const member = model.members.find((m) => m.id === memberId);
+    if (!member) return 0;
+    const ni = model.nodes.find((n) => n.id === member.ni);
+    const nj = model.nodes.find((n) => n.id === member.nj);
+    return ni && nj ? Math.sqrt((nj.x - ni.x) ** 2 + (nj.y - ni.y) ** 2) : 0;
+  };
+
+  return (
+    <>
+      <div className="prop-group">
+        <div className="prop-title">{t('prop.allNodalLoads')}</div>
+        {model.nodalLoads.length === 0 && (
+          <div className="muted">{t('prop.noLoads')}</div>
+        )}
+        {model.nodalLoads.map((load) => (
+          <div key={load.id} className="load-item">
+            <div className="prop-row">
+              <label>{t('prop.targetNode')}</label>
+              <span className="link-text" onClick={() => selectNode(load.nodeId)}>{nodeLabel(load.nodeId)}</span>
+            </div>
+            <div className="prop-row">
+              <label>Fx:</label>
+              <input type="number" value={load.fx} step="1"
+                onChange={(e) => updateNodalLoad(load.id, { fx: Number(e.target.value) })} />
+            </div>
+            <div className="prop-row">
+              <label>Fy:</label>
+              <input type="number" value={load.fy} step="1"
+                onChange={(e) => updateNodalLoad(load.id, { fy: Number(e.target.value) })} />
+            </div>
+            <div className="prop-row">
+              <label>Mz:</label>
+              <input type="number" value={load.mz} step="1"
+                onChange={(e) => updateNodalLoad(load.id, { mz: Number(e.target.value) })} />
+            </div>
+            <button className="danger small" onClick={() => removeNodalLoad(load.id)}>{t('prop.removeLoad')}</button>
+          </div>
+        ))}
+      </div>
+      <div className="prop-group">
+        <div className="prop-title">{t('prop.allMemberLoads')}</div>
+        {model.memberLoads.length === 0 && (
+          <div className="muted">{t('prop.noLoads')}</div>
+        )}
+        {model.memberLoads.map((load) => {
+          const L = getMemberLength(load.memberId);
+          return (
+            <div key={load.id} className="load-item">
+              <div className="prop-row">
+                <label>{t('prop.targetMember')}</label>
+                <span className="link-text" onClick={() => selectMember(load.memberId)}>{memberLabel(load.memberId)}</span>
+              </div>
+              <div className="prop-row">
+                <label>{t('prop.loadType')}</label>
+                <select value={load.type}
+                  onChange={(e) => {
+                    const newType = e.target.value as 'udl' | 'point';
+                    if (newType === 'point') {
+                      updateMemberLoad(load.id, { type: 'point', a: 0 } as Partial<Omit<MemberLoad, 'id'>>);
+                    } else {
+                      updateMemberLoad(load.id, { type: 'udl' } as Partial<Omit<MemberLoad, 'id'>>);
+                    }
+                  }}>
+                  <option value="udl">{t('prop.loadTypeUdl')}</option>
+                  <option value="point">{t('prop.loadTypePoint')}</option>
+                </select>
+              </div>
+              <div className="prop-row">
+                <label>{t('prop.loadDirection')}</label>
+                <select value={load.direction}
+                  onChange={(e) => updateMemberLoad(load.id, { direction: e.target.value as 'localX' | 'localY' })}>
+                  <option value="localY">localY</option>
+                  <option value="localX">localX</option>
+                </select>
+              </div>
+              <div className="prop-row">
+                <label>{load.type === 'udl' ? t('prop.loadIntensity') : t('prop.loadMagnitude')}</label>
+                <input type="number" value={load.value} step="1"
+                  onChange={(e) => updateMemberLoad(load.id, { value: Number(e.target.value) })} />
+              </div>
+              {load.type === 'point' && (
+                <div className="prop-row">
+                  <label>{t('prop.loadPosition')}</label>
+                  <input type="number" value={load.a} step="0.1" min="0" max={L}
+                    onChange={(e) => updateMemberLoad(load.id, { a: Number(e.target.value) } as Partial<Omit<MemberLoad, 'id'>>)} />
+                </div>
+              )}
+              <button className="danger small" onClick={() => removeMemberLoad(load.id)}>{t('prop.removeLoad')}</button>
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 };
 

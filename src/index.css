@@ -247,6 +247,23 @@ html, body, #root {
   font-size: 12px;
 }
 
+.prop-row .link-text {
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.prop-row .link-text:hover {
+  color: var(--accent-hover);
+}
+
+.prop-group .muted {
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 2px 0 4px;
+}
+
 .checkbox-label {
   display: flex;
   align-items: center;

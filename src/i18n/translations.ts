@@ -136,6 +136,13 @@ const ja = {
   'prop.units': '単位設定',
   'prop.forceUnit': '荷重:',
   'prop.lengthUnit': '長さ:',
+
+  // Load list
+  'prop.allNodalLoads': '節点荷重一覧',
+  'prop.allMemberLoads': '部材荷重一覧',
+  'prop.noLoads': '荷重なし',
+  'prop.targetNode': '節点:',
+  'prop.targetMember': '部材:',
 } as const;
 
 const en: Record<keyof typeof ja, string> = {
@@ -262,6 +269,12 @@ const en: Record<keyof typeof ja, string> = {
   'prop.units': 'Units',
   'prop.forceUnit': 'Force:',
   'prop.lengthUnit': 'Length:',
+
+  'prop.allNodalLoads': 'Nodal Loads',
+  'prop.allMemberLoads': 'Member Loads',
+  'prop.noLoads': 'No loads',
+  'prop.targetNode': 'Node:',
+  'prop.targetMember': 'Member:',
 };
 
 export type TKey = keyof typeof ja;
