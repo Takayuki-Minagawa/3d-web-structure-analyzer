@@ -171,7 +171,7 @@ export function applyEndReleases(k: Float64Array, releases: readonly EndRelease[
         if (Kip === 0) continue;
         for (let j = 0; j < N; j++) {
           if (j === p) continue;
-          k[i * N + j] -= Kip * k[p * N + j]! / Kpp;
+          k[i * N + j] = k[i * N + j]! - Kip * k[p * N + j]! / Kpp;
         }
       }
       // Zero out row and column p
@@ -192,7 +192,7 @@ export function applyEndReleases(k: Float64Array, releases: readonly EndRelease[
         if (Kip === 0) continue;
         for (let j = 0; j < N; j++) {
           if (j === p) continue;
-          k[i * N + j] -= Kip * k[p * N + j]! / denom;
+          k[i * N + j] = k[i * N + j]! - Kip * k[p * N + j]! / denom;
         }
       }
       // Row p and column p
@@ -239,7 +239,7 @@ export function applyEndReleasesToForce(
       const fp = f[p]!;
       for (let i = 0; i < N; i++) {
         if (i === p) continue;
-        f[i] -= K[i * N + p]! * fp / Kpp;
+        f[i] = f[i]! - K[i * N + p]! * fp / Kpp;
       }
       f[p] = 0;
       // Also condense K for subsequent releases
@@ -247,7 +247,7 @@ export function applyEndReleasesToForce(
         if (i === p) continue;
         for (let j = 0; j < N; j++) {
           if (j === p) continue;
-          K[i * N + j] -= K[i * N + p]! * K[p * N + j]! / Kpp;
+          K[i * N + j] = K[i * N + j]! - K[i * N + p]! * K[p * N + j]! / Kpp;
         }
       }
       for (let i = 0; i < N; i++) { K[p * N + i] = 0; K[i * N + p] = 0; }
@@ -259,7 +259,7 @@ export function applyEndReleasesToForce(
       const fp = f[p]!;
       for (let i = 0; i < N; i++) {
         if (i === p) continue;
-        f[i] -= K[i * N + p]! * fp / denom;
+        f[i] = f[i]! - K[i * N + p]! * fp / denom;
       }
       f[p] = kTh * fp / denom;
       // Condense K for subsequent releases
@@ -267,7 +267,7 @@ export function applyEndReleasesToForce(
         if (i === p) continue;
         for (let j = 0; j < N; j++) {
           if (j === p) continue;
-          K[i * N + j] -= K[i * N + p]! * K[p * N + j]! / denom;
+          K[i * N + j] = K[i * N + j]! - K[i * N + p]! * K[p * N + j]! / denom;
         }
       }
       for (let j = 0; j < N; j++) {

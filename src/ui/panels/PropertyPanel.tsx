@@ -5,6 +5,9 @@ import { useViewStore } from '../../state/viewStore';
 import { useT } from '../../i18n';
 import type { StructuralNode, Member, NodalLoad, MemberLoad } from '../../core/model/types';
 
+/** Distributive Omit that works correctly with union types */
+type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
+
 export const PropertyPanel: React.FC = () => {
   const model = useProjectStore((s) => s.model);
   const updateNode = useProjectStore((s) => s.updateNode);
@@ -161,7 +164,7 @@ const MemberProperties: React.FC<{
   onUpdate: (id: string, u: Partial<Pick<Member, 'sectionId' | 'codeAngle'>>) => void;
   onDelete: (id: string) => void;
   onAddLoad: (memberId: string) => void;
-  onUpdateLoad: (id: string, updates: Partial<Omit<MemberLoad, 'id'>>) => void;
+  onUpdateLoad: (id: string, updates: Partial<DistributiveOmit<MemberLoad, 'id'>>) => void;
   onRemoveLoad: (id: string) => void;
 }> = ({ member, model, memberLoads, onUpdate, onDelete, onAddLoad, onUpdateLoad, onRemoveLoad }) => {
   const t = useT();
@@ -189,47 +192,65 @@ const MemberProperties: React.FC<{
       </div>
       <div className="prop-title">{t('prop.memberLoads')}</div>
       {memberLoads.length === 0 && <div className="muted">{t('prop.noLoads')}</div>}
-      {memberLoads.filter(l => l.type !== 'cmq').map((load) => (
+      {memberLoads.map((load) => (
         <div key={load.id} className="load-item">
-          <div className="prop-row">
-            <label>{t('prop.loadType')}</label>
-            <select value={load.type}
-              onChange={(e) => {
-                const newType = e.target.value as 'udl' | 'point';
-                if (newType === 'point') {
-                  onUpdateLoad(load.id, { type: 'point', a: 0 } as Partial<Omit<MemberLoad, 'id'>>);
-                } else {
-                  onUpdateLoad(load.id, { type: 'udl' } as Partial<Omit<MemberLoad, 'id'>>);
-                }
-              }}>
-              <option value="udl">{t('prop.loadTypeUdl')}</option>
-              <option value="point">{t('prop.loadTypePoint')}</option>
-            </select>
-          </div>
-          {'direction' in load && (
-            <div className="prop-row">
-              <label>{t('prop.loadDirection')}</label>
-              <select value={load.direction}
-                onChange={(e) => onUpdateLoad(load.id, { direction: e.target.value as 'localX' | 'localY' | 'localZ' })}>
-                <option value="localY">localY</option>
-                <option value="localZ">localZ</option>
-                <option value="localX">localX</option>
-              </select>
-            </div>
-          )}
-          {'value' in load && (
-            <div className="prop-row">
-              <label>{load.type === 'udl' ? t('prop.loadIntensity') : t('prop.loadMagnitude')}</label>
-              <input type="number" value={load.value} step="1"
-                onChange={(e) => onUpdateLoad(load.id, { value: Number(e.target.value) })} />
-            </div>
-          )}
-          {load.type === 'point' && 'a' in load && (
-            <div className="prop-row">
-              <label>{t('prop.loadPosition')}</label>
-              <input type="number" value={load.a} step="0.1" min="0" max={L}
-                onChange={(e) => onUpdateLoad(load.id, { a: Number(e.target.value) } as Partial<Omit<MemberLoad, 'id'>>)} />
-            </div>
+          {load.type === 'cmq' ? (
+            <>
+              <div className="prop-row"><label>{t('prop.loadType')}</label><span>{t('prop.loadTypeCmq')}</span></div>
+              <div className="prop-row"><label>iQx</label><input type="number" value={load.iQx} step="1" onChange={(e) => onUpdateLoad(load.id, { iQx: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
+              <div className="prop-row"><label>iQy</label><input type="number" value={load.iQy} step="1" onChange={(e) => onUpdateLoad(load.id, { iQy: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
+              <div className="prop-row"><label>iQz</label><input type="number" value={load.iQz} step="1" onChange={(e) => onUpdateLoad(load.id, { iQz: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
+              <div className="prop-row"><label>iMy</label><input type="number" value={load.iMy} step="1" onChange={(e) => onUpdateLoad(load.id, { iMy: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
+              <div className="prop-row"><label>iMz</label><input type="number" value={load.iMz} step="1" onChange={(e) => onUpdateLoad(load.id, { iMz: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
+              <div className="prop-row"><label>jQx</label><input type="number" value={load.jQx} step="1" onChange={(e) => onUpdateLoad(load.id, { jQx: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
+              <div className="prop-row"><label>jQy</label><input type="number" value={load.jQy} step="1" onChange={(e) => onUpdateLoad(load.id, { jQy: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
+              <div className="prop-row"><label>jQz</label><input type="number" value={load.jQz} step="1" onChange={(e) => onUpdateLoad(load.id, { jQz: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
+              <div className="prop-row"><label>jMy</label><input type="number" value={load.jMy} step="1" onChange={(e) => onUpdateLoad(load.id, { jMy: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
+              <div className="prop-row"><label>jMz</label><input type="number" value={load.jMz} step="1" onChange={(e) => onUpdateLoad(load.id, { jMz: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
+            </>
+          ) : (
+            <>
+              <div className="prop-row">
+                <label>{t('prop.loadType')}</label>
+                <select value={load.type}
+                  onChange={(e) => {
+                    const newType = e.target.value as 'udl' | 'point';
+                    if (newType === 'point') {
+                      onUpdateLoad(load.id, { type: 'point', a: 0 } as Partial<DistributiveOmit<MemberLoad, 'id'>>);
+                    } else {
+                      onUpdateLoad(load.id, { type: 'udl' } as Partial<DistributiveOmit<MemberLoad, 'id'>>);
+                    }
+                  }}>
+                  <option value="udl">{t('prop.loadTypeUdl')}</option>
+                  <option value="point">{t('prop.loadTypePoint')}</option>
+                </select>
+              </div>
+              {'direction' in load && (
+                <div className="prop-row">
+                  <label>{t('prop.loadDirection')}</label>
+                  <select value={load.direction}
+                    onChange={(e) => onUpdateLoad(load.id, { direction: e.target.value as 'localX' | 'localY' | 'localZ' })}>
+                    <option value="localY">localY</option>
+                    <option value="localZ">localZ</option>
+                    <option value="localX">localX</option>
+                  </select>
+                </div>
+              )}
+              {'value' in load && (
+                <div className="prop-row">
+                  <label>{load.type === 'udl' ? t('prop.loadIntensity') : t('prop.loadMagnitude')}</label>
+                  <input type="number" value={load.value} step="1"
+                    onChange={(e) => onUpdateLoad(load.id, { value: Number(e.target.value) })} />
+                </div>
+              )}
+              {load.type === 'point' && 'a' in load && (
+                <div className="prop-row">
+                  <label>{t('prop.loadPosition')}</label>
+                  <input type="number" value={load.a} step="0.1" min="0" max={L}
+                    onChange={(e) => onUpdateLoad(load.id, { a: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} />
+                </div>
+              )}
+            </>
           )}
           <button className="danger small" onClick={() => onRemoveLoad(load.id)}>{t('prop.removeLoad')}</button>
         </div>

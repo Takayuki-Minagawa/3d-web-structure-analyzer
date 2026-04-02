@@ -30,7 +30,7 @@ export function assembleGlobalStiffness(model: IndexedModel): Float64Array {
       const gi = dofMap[dofs[i]!]!;
       for (let j = 0; j < MEMBER_DOF; j++) {
         const gj = dofMap[dofs[j]!]!;
-        K[gi * n + gj] += kGlobal[i * MEMBER_DOF + j]!;
+        K[gi * n + gj] = K[gi * n + gj]! + kGlobal[i * MEMBER_DOF + j]!;
       }
     }
   }

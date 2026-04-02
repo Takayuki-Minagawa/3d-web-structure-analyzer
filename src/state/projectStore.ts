@@ -13,9 +13,11 @@ import type {
   Restraint,
 } from '../core/model/types';
 import type { WorkerResponse } from '../worker/protocol';
-import type { FrameJsonDocument } from '../io/frameJsonTypes';
 import { parseFrameJsonText, isFrameJsonFormat } from '../io/frameJsonParser';
 import { convertFrameJson } from '../io/frameJsonConverter';
+
+/** Distributive Omit that works correctly with union types */
+type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
 
 function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
@@ -85,8 +87,8 @@ interface ProjectState {
   addNodalLoad: (load: Omit<NodalLoad, 'id'>) => string;
   updateNodalLoad: (id: string, updates: Partial<Omit<NodalLoad, 'id'>>) => void;
   removeNodalLoad: (id: string) => void;
-  addMemberLoad: (load: Omit<MemberLoad, 'id'>) => string;
-  updateMemberLoad: (id: string, updates: Partial<Omit<MemberLoad, 'id'>>) => void;
+  addMemberLoad: (load: DistributiveOmit<MemberLoad, 'id'>) => string;
+  updateMemberLoad: (id: string, updates: Partial<DistributiveOmit<MemberLoad, 'id'>>) => void;
   removeMemberLoad: (id: string) => void;
 
   // Coupling operations

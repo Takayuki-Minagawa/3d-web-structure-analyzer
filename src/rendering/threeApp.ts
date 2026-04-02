@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import type { ProjectModel, StructuralNode, DiagramPoint } from '../core/model/types';
+import type { ProjectModel, DiagramPoint } from '../core/model/types';
 import type { AnalysisResult } from '../state/projectStore';
-import type { DisplayMode, Theme } from '../state/viewStore';
+import type { DisplayMode, EditTool, Theme } from '../state/viewStore';
 
 const CAMERA_FOV = 45;
 const CAMERA_NEAR = 0.1;
@@ -47,6 +47,13 @@ export type ViewerSelection =
   | { kind: 'node'; nodeId: string }
   | { kind: 'member'; memberId: string };
 
+export type EditAction =
+  | { kind: 'addNode'; x: number; y: number; z: number }
+  | { kind: 'addMember'; ni: string; nj: string }
+  | { kind: 'setSupport'; nodeId: string }
+  | { kind: 'addNodalLoad'; nodeId: string }
+  | { kind: 'addMemberLoad'; memberId: string };
+
 export class ThreeApp {
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
@@ -77,8 +84,11 @@ export class ThreeApp {
   private isDark = false;
   private showNodeLabels = true;
   private showMemberLabels = true;
+  private editTool: EditTool = 'select';
+  private pendingMemberStart: string | null = null;
 
   onSelectionChanged: ((sel: ViewerSelection) => void) | null = null;
+  onEditAction: ((action: EditAction) => void) | null = null;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -191,6 +201,11 @@ export class ThreeApp {
 
   setShowNodeLabels(v: boolean): void { this.showNodeLabels = v; }
   setShowMemberLabels(v: boolean): void { this.showMemberLabels = v; }
+
+  setEditTool(tool: EditTool): void {
+    this.editTool = tool;
+    if (tool !== 'addMember') this.pendingMemberStart = null;
+  }
 
   setSelection(sel: ViewerSelection): void {
     this.selectedNodeId = sel.kind === 'node' ? sel.nodeId : null;
@@ -522,6 +537,23 @@ export class ThreeApp {
   private handleClick(x: number, y: number): void {
     if (!this.model) return;
 
+    switch (this.editTool) {
+      case 'addNode':
+        return this.handleAddNode(x, y);
+      case 'addMember':
+        return this.handleAddMember(x, y);
+      case 'setSupport':
+        return this.handleSetSupport(x, y);
+      case 'addNodalLoad':
+        return this.handleAddNodalLoad(x, y);
+      case 'addMemberLoad':
+        return this.handleAddMemberLoad(x, y);
+      default:
+        return this.handleSelect(x, y);
+    }
+  }
+
+  private handleSelect(x: number, y: number): void {
     const nodeHit = this.pickNode(x, y);
     const memberHit = this.pickMember(x, y);
 
@@ -550,6 +582,60 @@ export class ThreeApp {
     const sel: ViewerSelection = { kind: 'none' };
     this.setSelection(sel);
     this.onSelectionChanged?.(sel);
+  }
+
+  /** Raycast from screen (x,y) to the Z=0 ground plane, returning world coords. */
+  private screenToGroundPlane(x: number, y: number): { x: number; y: number; z: number } | null {
+    const w = this.renderer.domElement.clientWidth;
+    const h = this.renderer.domElement.clientHeight;
+    const ndcX = (x / w) * 2 - 1;
+    const ndcY = -(y / h) * 2 + 1;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    const target = new THREE.Vector3();
+    const hit = raycaster.ray.intersectPlane(plane, target);
+    if (!hit) return null;
+    return { x: Math.round(target.x), y: Math.round(target.y), z: 0 };
+  }
+
+  private handleAddNode(x: number, y: number): void {
+    const pos = this.screenToGroundPlane(x, y);
+    if (!pos) return;
+    this.onEditAction?.({ kind: 'addNode', x: pos.x, y: pos.y, z: pos.z });
+  }
+
+  private handleAddMember(x: number, y: number): void {
+    const nodeHit = this.pickNode(x, y);
+    if (!nodeHit) return;
+    if (!this.pendingMemberStart) {
+      this.pendingMemberStart = nodeHit.nodeId;
+      this.setSelection({ kind: 'node', nodeId: nodeHit.nodeId });
+      this.onSelectionChanged?.({ kind: 'node', nodeId: nodeHit.nodeId });
+    } else {
+      if (nodeHit.nodeId !== this.pendingMemberStart) {
+        this.onEditAction?.({ kind: 'addMember', ni: this.pendingMemberStart, nj: nodeHit.nodeId });
+      }
+      this.pendingMemberStart = null;
+    }
+  }
+
+  private handleSetSupport(x: number, y: number): void {
+    const nodeHit = this.pickNode(x, y);
+    if (!nodeHit) return;
+    this.onEditAction?.({ kind: 'setSupport', nodeId: nodeHit.nodeId });
+  }
+
+  private handleAddNodalLoad(x: number, y: number): void {
+    const nodeHit = this.pickNode(x, y);
+    if (!nodeHit) return;
+    this.onEditAction?.({ kind: 'addNodalLoad', nodeId: nodeHit.nodeId });
+  }
+
+  private handleAddMemberLoad(x: number, y: number): void {
+    const memberHit = this.pickMember(x, y);
+    if (!memberHit) return;
+    this.onEditAction?.({ kind: 'addMemberLoad', memberId: memberHit.memberId });
   }
 
   private pickNode(x: number, y: number): { nodeId: string; distSq: number } | null {

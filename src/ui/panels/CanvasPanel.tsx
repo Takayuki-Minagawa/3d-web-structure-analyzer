@@ -1,8 +1,12 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react';
 import { ThreeApp } from '../../rendering/threeApp';
+import type { EditAction } from '../../rendering/threeApp';
 import { useProjectStore } from '../../state/projectStore';
 import { useViewStore } from '../../state/viewStore';
 import { useSelectionStore } from '../../state/selectionStore';
+
+const FIXED_RESTRAINT = { ux: true, uy: true, uz: true, rx: true, ry: true, rz: true };
+const FREE_RESTRAINT = { ux: false, uy: false, uz: false, rx: false, ry: false, rz: false };
 
 export const CanvasPanel: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -10,8 +14,14 @@ export const CanvasPanel: React.FC = () => {
 
   const model = useProjectStore((s) => s.model);
   const analysisResult = useProjectStore((s) => s.analysisResult);
+  const addNode = useProjectStore((s) => s.addNode);
+  const addMember = useProjectStore((s) => s.addMember);
+  const updateNode = useProjectStore((s) => s.updateNode);
+  const addNodalLoad = useProjectStore((s) => s.addNodalLoad);
+  const addMemberLoad = useProjectStore((s) => s.addMemberLoad);
 
   const displayMode = useViewStore((s) => s.displayMode);
+  const editTool = useViewStore((s) => s.editTool);
   const theme = useViewStore((s) => s.theme);
   const showNodeLabels = useViewStore((s) => s.showNodeLabels);
   const showMemberLabels = useViewStore((s) => s.showMemberLabels);
@@ -21,6 +31,37 @@ export const CanvasPanel: React.FC = () => {
   const selectNode = useSelectionStore((s) => s.selectNode);
   const selectMember = useSelectionStore((s) => s.selectMember);
   const clearSelection = useSelectionStore((s) => s.clearSelection);
+
+  const handleEditAction = useCallback((action: EditAction) => {
+    switch (action.kind) {
+      case 'addNode': {
+        const id = addNode(action.x, action.y, action.z);
+        selectNode(id);
+        break;
+      }
+      case 'addMember': {
+        const id = addMember(action.ni, action.nj);
+        selectMember(id);
+        break;
+      }
+      case 'setSupport': {
+        const node = useProjectStore.getState().model.nodes.find(n => n.id === action.nodeId);
+        if (!node) break;
+        const isFixed = node.restraint.ux && node.restraint.uy && node.restraint.uz;
+        updateNode(action.nodeId, { restraint: isFixed ? FREE_RESTRAINT : FIXED_RESTRAINT });
+        selectNode(action.nodeId);
+        break;
+      }
+      case 'addNodalLoad':
+        addNodalLoad({ nodeId: action.nodeId, fx: 0, fy: 0, fz: -10, mx: 0, my: 0, mz: 0 });
+        selectNode(action.nodeId);
+        break;
+      case 'addMemberLoad':
+        addMemberLoad({ memberId: action.memberId, type: 'udl', direction: 'localY', value: -5 });
+        selectMember(action.memberId);
+        break;
+    }
+  }, [addNode, addMember, updateNode, addNodalLoad, addMemberLoad, selectNode, selectMember]);
 
   // Initialize Three.js app
   useEffect(() => {
@@ -36,12 +77,24 @@ export const CanvasPanel: React.FC = () => {
       else clearSelection();
     };
 
+    app.onEditAction = handleEditAction;
+
     return () => {
       app.dispose();
       appRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Update edit tool
+  useEffect(() => {
+    appRef.current?.setEditTool(editTool);
+  }, [editTool]);
+
+  // Keep edit action callback in sync
+  useEffect(() => {
+    if (appRef.current) appRef.current.onEditAction = handleEditAction;
+  }, [handleEditAction]);
 
   // Update model
   useEffect(() => {

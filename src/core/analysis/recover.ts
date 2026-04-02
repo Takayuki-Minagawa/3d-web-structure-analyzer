@@ -1,5 +1,5 @@
 import type { IndexedModel, IndexedMember, MemberLoad } from '../model/types';
-import { buildLocalStiffness } from './element3dFrame';
+import { buildLocalStiffness, applyEndReleases, applyEndReleasesToForce } from './element3dFrame';
 import { buildTransformationMatrix, transformVectorToLocal } from './transforms';
 import { computeMemberLoadFixedEndForces } from './loads';
 import { getMemberDofs } from './assembly';
@@ -44,6 +44,12 @@ export function computeElementEndForces(
   const kLocal = buildLocalStiffness(member);
   const T = buildTransformationMatrix(member);
 
+  // Apply end-release condensation (same as assembly phase)
+  const hasRelease = member.releases.some(r => r.type !== 'rigid');
+  if (hasRelease) {
+    applyEndReleases(kLocal, member.releases);
+  }
+
   // Extract element global displacements
   const dofs = getMemberDofs(member.ni, member.nj);
   const dGlobal = new Float64Array(MEMBER_DOF);
@@ -54,7 +60,7 @@ export function computeElementEndForces(
   // Transform to local
   const dLocal = transformVectorToLocal(dGlobal, T);
 
-  // k_local * d_local
+  // k_condensed * d_local
   const kd = new Float64Array(MEMBER_DOF);
   for (let i = 0; i < MEMBER_DOF; i++) {
     let sum = 0;
@@ -64,12 +70,16 @@ export function computeElementEndForces(
     kd[i] = sum;
   }
 
-  // Subtract fixed-end forces from member loads
+  // Subtract fixed-end forces from member loads (with end-release condensation)
   const fMemberLocal = new Float64Array(MEMBER_DOF);
   for (const ml of memberLoads) {
     const fLocal = computeMemberLoadFixedEndForces(member, ml);
+    if (hasRelease) {
+      const kOrig = buildLocalStiffness(member);
+      applyEndReleasesToForce(fLocal, kOrig, member.releases);
+    }
     for (let i = 0; i < MEMBER_DOF; i++) {
-      fMemberLocal[i]! += fLocal[i]!;
+      fMemberLocal[i] = fMemberLocal[i]! + fLocal[i]!;
     }
   }
 

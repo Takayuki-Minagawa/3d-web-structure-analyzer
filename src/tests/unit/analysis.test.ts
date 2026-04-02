@@ -18,6 +18,7 @@ function createBaseModel(): ProjectModel {
     }],
     springs: [],
     members: [],
+    couplings: [],
     nodalLoads: [],
     memberLoads: [],
     units: { force: 'kN', length: 'm', moment: 'kN·m' },
@@ -39,9 +40,8 @@ describe('3D Cantilever beam with tip load in Y', () => {
   const Iz = 8.333e-6;
   const nu = 0.3;
   const G = E / (2 * (1 + nu));
-  const ky = 0.5;
   const A = 0.01;
-  const Asz = ky * A; // Asz used for Y-bending (phi_z uses kz)
+  // Asz = ky * A (ky=0.5), used for Y-bending (phi_z uses kz)
 
   function buildModel(): ProjectModel {
     const model = createBaseModel();
@@ -277,6 +277,33 @@ describe('Pin release at member end', () => {
     const Rz3 = result.reactions[20]!;
     expect(Rz0 + Rz3).toBeCloseTo(-P, 4);
   });
+
+  it('should have zero Mz at pinned end with UDL member load', () => {
+    // Reproducer for issue #14: pin release + UDL
+    const model = createBaseModel();
+    model.springs = [
+      { id: 'spr2', number: 2, method: 0, kTheta: 0 },
+    ];
+    model.nodes = [
+      { id: 'n0', x: 0, y: 0, z: 0, restraint: FIXED },
+      { id: 'n1', x: 5, y: 0, z: 0, restraint: FIXED },
+    ];
+    model.members = [
+      {
+        ...defaultMember('m1', 'n0', 'n1'),
+        jSprings: { x: 0, y: 0, z: 2 }, // pin about Z at j-end
+      },
+    ];
+    model.memberLoads = [
+      { id: 'ml1', memberId: 'm1', type: 'udl', direction: 'localY', value: -10 },
+    ];
+    const indexed = buildIndexedModel(model);
+    const result = analyzeFrame({ model: indexed });
+
+    const ef = result.elementEndForces.get('m1')!;
+    // Mzj (index 11) should be ~0 due to pin release at j-end
+    expect(Math.abs(ef[11]!)).toBeLessThan(1e-6);
+  });
 });
 
 describe('DOF coupling (same displacement)', () => {
@@ -329,6 +356,36 @@ describe('DOF coupling (same displacement)', () => {
     const uUz = Math.abs(uRes.displacements[8]!);
     expect(cUz).toBeLessThan(uUz);
     expect(cUz).toBeCloseTo(uUz / 2, 2);
+  });
+});
+
+describe('Coupling: slave-side constraint propagates to master', () => {
+  // Issue #16: if slave DOF is fixed, master DOF should also be fixed
+  it('should treat master DOF as fixed when slave is restrained', () => {
+    const model = createBaseModel();
+    model.nodes = [
+      { id: 'nm', x: 0, y: 0, z: 0, restraint: FREE },  // master: free
+      { id: 'ns', x: 0, y: 2, z: 0, restraint: { ux: true, uy: false, uz: false, rx: false, ry: false, rz: false } }, // slave: ux fixed
+      { id: 'n2', x: 4, y: 0, z: 0, restraint: FIXED },
+      { id: 'n3', x: 4, y: 2, z: 0, restraint: FIXED },
+    ];
+    model.members = [
+      defaultMember('m1', 'nm', 'n2'),
+      defaultMember('m2', 'ns', 'n3'),
+    ];
+    // Couple nm and ns in ux (master=nm, slave=ns)
+    model.couplings = [
+      { id: 'c1', masterNodeId: 'nm', slaveNodeId: 'ns', ux: true, uy: false, uz: false, rx: false, ry: false, rz: false },
+    ];
+    model.nodalLoads = [
+      { id: 'nl1', nodeId: 'nm', fx: 0, fy: 0, fz: -10, mx: 0, my: 0, mz: 0 },
+    ];
+
+    const indexed = buildIndexedModel(model);
+    const result = analyzeFrame({ model: indexed });
+
+    // nm ux (DOF 0) should be 0 because slave ns has ux fixed → propagated to master
+    expect(result.displacements[0]).toBeCloseTo(0, 8);
   });
 });
 

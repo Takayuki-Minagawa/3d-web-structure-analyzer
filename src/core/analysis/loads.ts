@@ -158,7 +158,7 @@ export function buildGlobalForceVector(model: IndexedModel): Float64Array {
     const base = idx * 6;
     const vals = [nl.fx, nl.fy, nl.fz, nl.mx, nl.my, nl.mz];
     for (let d = 0; d < 6; d++) {
-      F[dofMap[base + d]!] += vals[d]!;
+      F[dofMap[base + d]!] = F[dofMap[base + d]!]! + vals[d]!;
     }
   }
 
@@ -184,8 +184,8 @@ export function buildGlobalForceVector(model: IndexedModel): Float64Array {
     const iBase = member.ni * 6;
     const jBase = member.nj * 6;
     for (let d = 0; d < 6; d++) {
-      F[dofMap[iBase + d]!] += fGlobal[d]!;
-      F[dofMap[jBase + d]!] += fGlobal[6 + d]!;
+      F[dofMap[iBase + d]!] = F[dofMap[iBase + d]!]! + fGlobal[d]!;
+      F[dofMap[jBase + d]!] = F[dofMap[jBase + d]!]! + fGlobal[6 + d]!;
     }
   }
 
