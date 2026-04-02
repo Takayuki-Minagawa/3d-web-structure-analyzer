@@ -68,6 +68,7 @@ export const HelpDialog: React.FC<Props> = ({ open, onClose }) => {
         t('help.signs.axial'),
         t('help.signs.load'),
         t('help.signs.local'),
+        t('help.signs.display'),
       ],
     },
   ];

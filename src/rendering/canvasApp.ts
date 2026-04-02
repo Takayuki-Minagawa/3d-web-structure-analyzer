@@ -444,15 +444,17 @@ export class CanvasRenderer {
 
     const dx = x2 - x1;
     const dy = y2 - y1;
-    const len = Math.sqrt(dx * dx + dy * dy);
-    if (len < 1) return;
+    const mdx = nj.x - ni.x;
+    const mdy = nj.y - ni.y;
+    const len = Math.sqrt(mdx * mdx + mdy * mdy);
+    if (len < 1e-10) return;
 
-    // Unit vectors along and perpendicular to member
-    const ux = dx / len;
-    const uy = dy / len;
-    // Perpendicular (local Y in screen space, considering Y flip)
-    const px = -uy;
-    const py = ux;
+    // localX follows i -> j. Display-positive transverse is clockwise from localX,
+    // so beams show downward positive and columns show rightward positive.
+    const alongX = mdx / len;
+    const alongY = -mdy / len;
+    const transverseX = mdy / len;
+    const transverseY = mdx / len;
 
     ctx.strokeStyle = this.colors.load;
     ctx.fillStyle = this.colors.load;
@@ -461,62 +463,52 @@ export class CanvasRenderer {
     const arrowSize = 25;
 
     if (load.type === 'udl') {
-      const numArrows = Math.max(3, Math.floor(len / 30));
+      const screenLen = Math.sqrt(dx * dx + dy * dy);
+      const numArrows = Math.max(3, Math.floor(screenLen / 30));
       const isAxial = load.direction === 'localX';
-      const dir = load.value > 0 ? 1 : -1;
+      const dir = isAxial
+        ? (load.value >= 0 ? 1 : -1)
+        : (load.value <= 0 ? 1 : -1);
+      const basisX = isAxial ? alongX : transverseX;
+      const basisY = isAxial ? alongY : transverseY;
 
       for (let i = 0; i <= numArrows; i++) {
         const t = i / numArrows;
         const bx = x1 + dx * t;
         const by = y1 + dy * t;
-
-        if (isAxial) {
-          const ex = bx + ux * arrowSize * dir;
-          const ey = by + uy * arrowSize * dir;
-          ctx.beginPath();
-          ctx.moveTo(ex, ey);
-          ctx.lineTo(bx, by);
-          ctx.stroke();
-        } else {
-          const ex = bx + px * arrowSize * dir;
-          const ey = by + py * arrowSize * dir;
-          ctx.beginPath();
-          ctx.moveTo(ex, ey);
-          ctx.lineTo(bx, by);
-          ctx.stroke();
-        }
+        const ex = bx - basisX * arrowSize * dir;
+        const ey = by - basisY * arrowSize * dir;
+        ctx.beginPath();
+        ctx.moveTo(ex, ey);
+        ctx.lineTo(bx, by);
+        ctx.stroke();
+        this.drawArrowHead(ctx, bx, by, basisX * dir, basisY * dir);
       }
 
       // Connect arrow bases
       if (!isAxial) {
         ctx.beginPath();
-        ctx.moveTo(x1 + px * arrowSize * dir, y1 + py * arrowSize * dir);
-        ctx.lineTo(x2 + px * arrowSize * dir, y2 + py * arrowSize * dir);
+        ctx.moveTo(x1 - basisX * arrowSize * dir, y1 - basisY * arrowSize * dir);
+        ctx.lineTo(x2 - basisX * arrowSize * dir, y2 - basisY * arrowSize * dir);
         ctx.stroke();
       }
     } else if (load.type === 'point') {
-      const bx = x1 + dx * (load.a * this.viewport.scale / len);
-      const by = y1 + dy * (load.a * this.viewport.scale / len);
+      const t = load.a / len;
+      const bx = x1 + dx * t;
+      const by = y1 + dy * t;
       const isAxial = load.direction === 'localX';
-      const dir = load.value > 0 ? 1 : -1;
-
-      if (isAxial) {
-        const ex = bx + ux * arrowSize * dir;
-        const ey = by + uy * arrowSize * dir;
-        ctx.beginPath();
-        ctx.moveTo(ex, ey);
-        ctx.lineTo(bx, by);
-        ctx.stroke();
-        this.drawArrowHead(ctx, bx, by, ux * dir, uy * dir);
-      } else {
-        const ex = bx + px * arrowSize * dir;
-        const ey = by + py * arrowSize * dir;
-        ctx.beginPath();
-        ctx.moveTo(ex, ey);
-        ctx.lineTo(bx, by);
-        ctx.stroke();
-        this.drawArrowHead(ctx, bx, by, px * dir, py * dir);
-      }
+      const dir = isAxial
+        ? (load.value >= 0 ? 1 : -1)
+        : (load.value <= 0 ? 1 : -1);
+      const basisX = isAxial ? alongX : transverseX;
+      const basisY = isAxial ? alongY : transverseY;
+      const ex = bx - basisX * arrowSize * dir;
+      const ey = by - basisY * arrowSize * dir;
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      this.drawArrowHead(ctx, bx, by, basisX * dir, basisY * dir);
     }
   }
 

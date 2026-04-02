@@ -19,8 +19,84 @@ function generateId(): string {
 const forceBase: Record<string, number> = { N: 1, kN: 1000 };
 const lengthBase: Record<string, number> = { mm: 0.001, cm: 0.01, m: 1 };
 const DEFAULT_POISSON_RATIO = 0.3;
+const EPSILON = 1e-10;
+
+function memberOrderKey(node: Pick<StructuralNode, 'x' | 'y'>): [number, number, number] {
+  return [node.x * node.x + node.y * node.y, node.x, node.y];
+}
+
+function shouldSwapMemberEnds(
+  nodeI: Pick<StructuralNode, 'x' | 'y'>,
+  nodeJ: Pick<StructuralNode, 'x' | 'y'>
+): boolean {
+  const iKey = memberOrderKey(nodeI);
+  const jKey = memberOrderKey(nodeJ);
+
+  for (let index = 0; index < iKey.length; index++) {
+    const delta = iKey[index]! - jKey[index]!;
+    if (Math.abs(delta) > EPSILON) return delta > 0;
+  }
+
+  return false;
+}
+
+function normalizeMembersAndLoads(
+  nodes: StructuralNode[],
+  members: Member[],
+  memberLoads: MemberLoad[]
+): Pick<ProjectModel, 'members' | 'memberLoads'> {
+  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+  const reversedMembers = new Map<string, number>();
+
+  const normalizedMembers = members.map((member) => {
+    const nodeI = nodeMap.get(member.ni);
+    const nodeJ = nodeMap.get(member.nj);
+    if (!nodeI || !nodeJ) return member;
+    if (!shouldSwapMemberEnds(nodeI, nodeJ)) return member;
+
+    const dx = nodeJ.x - nodeI.x;
+    const dy = nodeJ.y - nodeI.y;
+    reversedMembers.set(member.id, Math.sqrt(dx * dx + dy * dy));
+
+    return {
+      ...member,
+      ni: member.nj,
+      nj: member.ni,
+    };
+  });
+
+  if (reversedMembers.size === 0) {
+    return { members: normalizedMembers, memberLoads };
+  }
+
+  const normalizedLoads = memberLoads.map((load) => {
+    const length = reversedMembers.get(load.memberId);
+    if (length === undefined) return load;
+
+    if (load.type === 'point') {
+      return {
+        ...load,
+        value: -load.value,
+        a: Math.max(0, Math.min(length, length - load.a)),
+      };
+    }
+
+    return {
+      ...load,
+      value: -load.value,
+    };
+  });
+
+  return { members: normalizedMembers, memberLoads: normalizedLoads };
+}
 
 function normalizeModel(model: ProjectModel): ProjectModel {
+  const { members, memberLoads } = normalizeMembersAndLoads(
+    model.nodes,
+    model.members,
+    model.memberLoads
+  );
+
   return {
     ...model,
     materials: model.materials.map((mat) => ({
@@ -31,6 +107,8 @@ function normalizeModel(model: ProjectModel): ProjectModel {
       ...sec,
       As: sec.As ?? sec.A,
     })),
+    members,
+    memberLoads,
     units: model.units ?? { force: 'kN', length: 'm', moment: 'kN·m' },
   };
 }
@@ -127,15 +205,26 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   updateNode: (id, updates) => {
-    set((s) => ({
-      model: {
-        ...s.model,
-        nodes: s.model.nodes.map((n) =>
-          n.id === id ? { ...n, ...updates } : n
-        ),
-      },
-      isResultStale: true,
-    }));
+    set((s) => {
+      const nodes = s.model.nodes.map((n) =>
+        n.id === id ? { ...n, ...updates } : n
+      );
+      const { members, memberLoads } = normalizeMembersAndLoads(
+        nodes,
+        s.model.members,
+        s.model.memberLoads
+      );
+
+      return {
+        model: {
+          ...s.model,
+          nodes,
+          members,
+          memberLoads,
+        },
+        isResultStale: true,
+      };
+    });
   },
 
   removeNode: (id) => {
@@ -161,13 +250,22 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { materials, sections } = get().model;
     const materialId = materials[0]?.id ?? '';
     const sectionId = sections[0]?.id ?? '';
-    set((s) => ({
-      model: {
-        ...s.model,
-        members: [...s.model.members, { id, ni, nj, materialId, sectionId }],
-      },
-      isResultStale: true,
-    }));
+    set((s) => {
+      const { members, memberLoads } = normalizeMembersAndLoads(
+        s.model.nodes,
+        [...s.model.members, { id, ni, nj, materialId, sectionId }],
+        s.model.memberLoads
+      );
+
+      return {
+        model: {
+          ...s.model,
+          members,
+          memberLoads,
+        },
+        isResultStale: true,
+      };
+    });
     return id;
   },
 

@@ -118,6 +118,7 @@ const ja = {
   'help.signs.axial': '軸力: 正 = 引張',
   'help.signs.load': '荷重: 正方向 = 座標軸正方向',
   'help.signs.local': 'localX = i端→j端方向、localY = localXの90度反時計回り',
+  'help.signs.display': '部材のI端は原点に近い側へ自動補正。表示上の横方向正は時計回り側（梁は下、柱は右）',
 
   // Materials & Sections
   'prop.materials': '材料',
@@ -255,6 +256,7 @@ const en: Record<keyof typeof ja, string> = {
   'help.signs.axial': 'Axial force: positive = tension',
   'help.signs.load': 'Load: positive direction = positive axis direction',
   'help.signs.local': 'localX = i-end to j-end, localY = 90 deg CCW from localX',
+  'help.signs.display': 'I-end is auto-normalized toward the origin. Display-positive transverse is clockwise from localX (beam: down, column: right)',
 
   'prop.materials': 'Materials',
   'prop.matName': 'Name:',

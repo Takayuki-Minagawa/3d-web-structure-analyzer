@@ -24,6 +24,35 @@ describe('projectStore model normalization', () => {
     expect(model.materials[0]?.nu).toBe(0.3);
     expect(model.sections[0]?.As).toBe(0.01);
   });
+
+  it('normalizes member I/J order and preserves member-load meaning', () => {
+    const legacyModel = {
+      nodes: [
+        { id: 'near', x: 0, y: 0, restraint: { ux: false, uy: false, rz: false } },
+        { id: 'far', x: 4, y: 0, restraint: { ux: false, uy: false, rz: false } },
+      ],
+      materials: [{ id: 'mat1', name: 'Steel', E: 205000 }],
+      sections: [{ id: 'sec1', name: 'Default', A: 0.01, I: 1e-4 }],
+      members: [{ id: 'm1', ni: 'far', nj: 'near', materialId: 'mat1', sectionId: 'sec1' }],
+      nodalLoads: [],
+      memberLoads: [
+        { id: 'udl1', memberId: 'm1', type: 'udl', direction: 'localY', value: -5 },
+        { id: 'pt1', memberId: 'm1', type: 'point', direction: 'localX', value: 3, a: 1 },
+      ],
+      units: { force: 'kN', length: 'm', moment: 'kN·m' },
+    } as unknown as ProjectModel;
+
+    useProjectStore.getState().loadModel(legacyModel);
+
+    const model = useProjectStore.getState().model;
+    expect(model.members[0]).toMatchObject({ ni: 'near', nj: 'far' });
+
+    const udl = model.memberLoads.find((load) => load.id === 'udl1');
+    expect(udl).toMatchObject({ value: 5 });
+
+    const pointLoad = model.memberLoads.find((load) => load.id === 'pt1');
+    expect(pointLoad).toMatchObject({ value: -3, a: 3 });
+  });
 });
 
 describe('projectStore unit conversion', () => {
