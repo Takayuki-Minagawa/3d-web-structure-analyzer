@@ -257,12 +257,22 @@ export class ThreeApp {
     while (group.children.length > 0) {
       const child = group.children[0]!;
       group.remove(child);
-      if (child instanceof THREE.Mesh || child instanceof THREE.Points || child instanceof THREE.LineSegments || child instanceof THREE.Line) {
-        child.geometry.dispose();
-        const mat = child.material;
-        if (Array.isArray(mat)) mat.forEach(m => m.dispose());
-        else mat.dispose();
-      }
+      this.disposeObject(child);
+    }
+  }
+
+  private disposeObject(obj: THREE.Object3D): void {
+    // Recurse into children first (e.g. ArrowHelper contains line + cone)
+    while (obj.children.length > 0) {
+      const child = obj.children[0]!;
+      obj.remove(child);
+      this.disposeObject(child);
+    }
+    if (obj instanceof THREE.Mesh || obj instanceof THREE.Points || obj instanceof THREE.LineSegments || obj instanceof THREE.Line) {
+      obj.geometry.dispose();
+      const mat = obj.material;
+      if (Array.isArray(mat)) mat.forEach(m => m.dispose());
+      else mat.dispose();
     }
   }
 
