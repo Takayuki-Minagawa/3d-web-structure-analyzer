@@ -338,73 +338,135 @@ export class ThreeApp {
     }
   }
 
+  /**
+   * Compute local axes for a member, matching indexing.ts computeLambda.
+   * Returns { lx, ly, lz } as THREE.Vector3 in global coords.
+   */
+  private computeMemberLocalAxes(
+    ni: { x: number; y: number; z: number },
+    nj: { x: number; y: number; z: number },
+    codeAngle: number
+  ): { lx: THREE.Vector3; ly: THREE.Vector3; lz: THREE.Vector3 } {
+    const dx = nj.x - ni.x, dy = nj.y - ni.y, dz = nj.z - ni.z;
+    const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const lx = new THREE.Vector3(dx / L, dy / L, dz / L);
+
+    const isVertical = Math.abs(lx.z) > 0.95;
+    const ref = isVertical ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+
+    const ly = new THREE.Vector3().crossVectors(ref, lx).normalize();
+    const lz = new THREE.Vector3().crossVectors(lx, ly).normalize();
+
+    if (codeAngle !== 0) {
+      const theta = codeAngle * Math.PI / 180;
+      const cosT = Math.cos(theta), sinT = Math.sin(theta);
+      const ly2 = ly.clone().multiplyScalar(cosT).add(lz.clone().multiplyScalar(sinT));
+      const lz2 = ly.clone().multiplyScalar(-sinT).add(lz.clone().multiplyScalar(cosT));
+      return { lx, ly: ly2, lz: lz2 };
+    }
+    return { lx, ly, lz };
+  }
+
   private rebuildLoads(): void {
     this.clearGroup(this.loadGroup);
     if (!this.model) return;
 
-    const LOAD_COLOR = 0xff4444;
+    const FORCE_COLOR = 0xff4444;
+    const MOMENT_COLOR = 0xee8800;
     const ARROW_LEN = 15;
     const HEAD_LEN = 4;
     const HEAD_WIDTH = 2;
 
     const nodeMap = new Map(this.model.nodes.map(n => [n.id, n]));
 
-    // Nodal loads: draw arrows at node position
+    const addArrow = (origin: THREE.Vector3, dir: THREE.Vector3, len: number, color: number) => {
+      const start = origin.clone().add(dir.clone().multiplyScalar(-len));
+      this.loadGroup.add(new THREE.ArrowHelper(dir, start, len, color, HEAD_LEN, HEAD_WIDTH));
+    };
+
+    // ── Nodal loads: forces + moments ──
     for (const nl of this.model.nodalLoads) {
       const node = nodeMap.get(nl.nodeId);
       if (!node) continue;
+      const o = new THREE.Vector3(node.x, node.y, node.z);
 
-      const forces = [
-        { v: nl.fx, dir: new THREE.Vector3(1, 0, 0) },
-        { v: nl.fy, dir: new THREE.Vector3(0, 1, 0) },
-        { v: nl.fz, dir: new THREE.Vector3(0, 0, 1) },
+      // Forces
+      const forces: [number, THREE.Vector3][] = [
+        [nl.fx, new THREE.Vector3(1, 0, 0)],
+        [nl.fy, new THREE.Vector3(0, 1, 0)],
+        [nl.fz, new THREE.Vector3(0, 0, 1)],
       ];
-      const origin = new THREE.Vector3(node.x, node.y, node.z);
-
-      for (const { v, dir } of forces) {
+      for (const [v, dir] of forces) {
         if (Math.abs(v) < 1e-10) continue;
+        addArrow(o, dir.multiplyScalar(v > 0 ? 1 : -1), ARROW_LEN, FORCE_COLOR);
+      }
+
+      // Moments (double-headed arc approximated as curved arrow symbol)
+      const moments: [number, THREE.Vector3][] = [
+        [nl.mx, new THREE.Vector3(1, 0, 0)],
+        [nl.my, new THREE.Vector3(0, 1, 0)],
+        [nl.mz, new THREE.Vector3(0, 0, 1)],
+      ];
+      for (const [v, axis] of moments) {
+        if (Math.abs(v) < 1e-10) continue;
+        // Draw a double arrow perpendicular to the axis to indicate moment
+        const perp = Math.abs(axis.z) > 0.9
+          ? new THREE.Vector3(1, 0, 0)
+          : new THREE.Vector3(0, 0, 1);
+        const arm = new THREE.Vector3().crossVectors(axis, perp).normalize();
         const sign = v > 0 ? 1 : -1;
-        const arrowDir = dir.clone().multiplyScalar(sign);
-        const start = origin.clone().add(arrowDir.clone().multiplyScalar(-ARROW_LEN));
-        const arrow = new THREE.ArrowHelper(arrowDir, start, ARROW_LEN, LOAD_COLOR, HEAD_LEN, HEAD_WIDTH);
-        this.loadGroup.add(arrow);
+        const tipDir = new THREE.Vector3().crossVectors(arm, axis).normalize().multiplyScalar(sign);
+        const armOffset = o.clone().add(arm.clone().multiplyScalar(ARROW_LEN * 0.5));
+        addArrow(armOffset, tipDir, ARROW_LEN * 0.5, MOMENT_COLOR);
+        const armOffset2 = o.clone().add(arm.clone().multiplyScalar(-ARROW_LEN * 0.5));
+        addArrow(armOffset2, tipDir.clone().negate(), ARROW_LEN * 0.5, MOMENT_COLOR);
       }
     }
 
-    // Member UDL loads: draw small arrows along member
+    // ── Member loads ──
+    const memberMap = new Map(this.model.members.map(m => [m.id, m]));
+
     for (const ml of this.model.memberLoads) {
-      if (ml.type !== 'udl') continue;
-      const member = this.model.members.find(m => m.id === ml.memberId);
+      const member = memberMap.get(ml.memberId);
       if (!member) continue;
       const ni = nodeMap.get(member.ni);
       const nj = nodeMap.get(member.nj);
       if (!ni || !nj) continue;
 
-      const start = new THREE.Vector3(ni.x, ni.y, ni.z);
-      const end = new THREE.Vector3(nj.x, nj.y, nj.z);
+      const pI = new THREE.Vector3(ni.x, ni.y, ni.z);
+      const pJ = new THREE.Vector3(nj.x, nj.y, nj.z);
+      const { lx, ly, lz } = this.computeMemberLocalAxes(ni, nj, member.codeAngle);
 
-      // Determine load direction in world space (approximate: use Z for localY, Y for localZ)
-      let loadDir: THREE.Vector3;
-      if (ml.direction === 'localY') {
-        const memberDir = end.clone().sub(start).normalize();
-        const up = new THREE.Vector3(0, 0, 1);
-        loadDir = new THREE.Vector3().crossVectors(memberDir, up).normalize();
-        if (loadDir.lengthSq() < 0.01) loadDir.set(0, 1, 0);
-      } else if (ml.direction === 'localZ') {
-        loadDir = new THREE.Vector3(0, 0, 1);
-      } else {
-        continue; // localX UDL not visualized with arrows
-      }
+      const localDir = (dir: string): THREE.Vector3 => {
+        if (dir === 'localX') return lx.clone();
+        if (dir === 'localZ') return lz.clone();
+        return ly.clone();
+      };
 
-      const sign = ml.value > 0 ? 1 : -1;
-      const arrDir = loadDir.clone().multiplyScalar(sign);
-      const NSEG = 5;
-      for (let i = 0; i <= NSEG; i++) {
-        const t = i / NSEG;
-        const pos = start.clone().lerp(end.clone(), t);
-        const aStart = pos.clone().add(arrDir.clone().multiplyScalar(-ARROW_LEN * 0.6));
-        const arrow = new THREE.ArrowHelper(arrDir, aStart, ARROW_LEN * 0.6, LOAD_COLOR, HEAD_LEN * 0.6, HEAD_WIDTH * 0.6);
-        this.loadGroup.add(arrow);
+      if (ml.type === 'udl') {
+        const dir = localDir(ml.direction).multiplyScalar(ml.value > 0 ? 1 : -1);
+        const NSEG = 5;
+        for (let i = 0; i <= NSEG; i++) {
+          const pos = pI.clone().lerp(pJ.clone(), i / NSEG);
+          addArrow(pos, dir, ARROW_LEN * 0.6, FORCE_COLOR);
+        }
+      } else if (ml.type === 'point') {
+        const L = pI.distanceTo(pJ);
+        const t = L > 0 ? ml.a / L : 0;
+        const pos = pI.clone().lerp(pJ.clone(), t);
+        const dir = localDir(ml.direction).multiplyScalar(ml.value > 0 ? 1 : -1);
+        addArrow(pos, dir, ARROW_LEN, FORCE_COLOR);
+      } else if (ml.type === 'cmq') {
+        // CMQ: show force arrows at i-end and j-end
+        const cmqForces: [THREE.Vector3, [number, number, number]][] = [
+          [pI, [ml.iQx, ml.iQy, ml.iQz]],
+          [pJ, [ml.jQx, ml.jQy, ml.jQz]],
+        ];
+        for (const [pos, [qx, qy, qz]] of cmqForces) {
+          if (Math.abs(qx) > 1e-10) addArrow(pos, lx.clone().multiplyScalar(qx > 0 ? 1 : -1), ARROW_LEN * 0.5, FORCE_COLOR);
+          if (Math.abs(qy) > 1e-10) addArrow(pos, ly.clone().multiplyScalar(qy > 0 ? 1 : -1), ARROW_LEN * 0.5, FORCE_COLOR);
+          if (Math.abs(qz) > 1e-10) addArrow(pos, lz.clone().multiplyScalar(qz > 0 ? 1 : -1), ARROW_LEN * 0.5, FORCE_COLOR);
+        }
       }
     }
   }
