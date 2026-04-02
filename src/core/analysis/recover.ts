@@ -1,8 +1,10 @@
 import type { IndexedModel, IndexedMember, MemberLoad } from '../model/types';
-import { buildLocalStiffness } from './element2dFrame';
+import { buildLocalStiffness } from './element3dFrame';
 import { buildTransformationMatrix, transformVectorToLocal } from './transforms';
 import { computeMemberLoadFixedEndForces } from './loads';
 import { getMemberDofs } from './assembly';
+
+const MEMBER_DOF = 12;
 
 /**
  * Compute reactions: R = K_full * d - F_full
@@ -31,7 +33,8 @@ export function computeReactions(
  * Compute element end forces in local coordinates for a single member.
  * q_end_local = k_local * d_local - f_member_load_local
  *
- * Sign convention: positive axial = tension
+ * Returns 12-element Float64Array:
+ * [Nxi, Vyi, Vzi, Mxi, Myi, Mzi, Nxj, Vyj, Vzj, Mxj, Myj, Mzj]
  */
 export function computeElementEndForces(
   member: IndexedMember,
@@ -43,8 +46,8 @@ export function computeElementEndForces(
 
   // Extract element global displacements
   const dofs = getMemberDofs(member.ni, member.nj);
-  const dGlobal = new Float64Array(6);
-  for (let i = 0; i < 6; i++) {
+  const dGlobal = new Float64Array(MEMBER_DOF);
+  for (let i = 0; i < MEMBER_DOF; i++) {
     dGlobal[i] = globalDisplacements[dofs[i]!]!;
   }
 
@@ -52,26 +55,26 @@ export function computeElementEndForces(
   const dLocal = transformVectorToLocal(dGlobal, T);
 
   // k_local * d_local
-  const kd = new Float64Array(6);
-  for (let i = 0; i < 6; i++) {
+  const kd = new Float64Array(MEMBER_DOF);
+  for (let i = 0; i < MEMBER_DOF; i++) {
     let sum = 0;
-    for (let j = 0; j < 6; j++) {
-      sum += kLocal[i * 6 + j]! * dLocal[j]!;
+    for (let j = 0; j < MEMBER_DOF; j++) {
+      sum += kLocal[i * MEMBER_DOF + j]! * dLocal[j]!;
     }
     kd[i] = sum;
   }
 
   // Subtract fixed-end forces from member loads
-  const fMemberLocal = new Float64Array(6);
+  const fMemberLocal = new Float64Array(MEMBER_DOF);
   for (const ml of memberLoads) {
     const fLocal = computeMemberLoadFixedEndForces(member, ml);
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < MEMBER_DOF; i++) {
       fMemberLocal[i]! += fLocal[i]!;
     }
   }
 
-  const endForces = new Float64Array(6);
-  for (let i = 0; i < 6; i++) {
+  const endForces = new Float64Array(MEMBER_DOF);
+  for (let i = 0; i < MEMBER_DOF; i++) {
     endForces[i] = kd[i]! - fMemberLocal[i]!;
   }
 

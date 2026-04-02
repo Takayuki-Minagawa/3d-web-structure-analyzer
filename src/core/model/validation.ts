@@ -34,6 +34,13 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
         elementId: mat.id,
       });
     }
+    if (mat.G <= 0) {
+      errors.push({
+        type: 'validation',
+        message: `材料 "${mat.name}" のせん断弾性係数 G が正でありません (G=${mat.G})。`,
+        elementId: mat.id,
+      });
+    }
   }
 
   // Check: sections
@@ -51,10 +58,24 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
         elementId: sec.id,
       });
     }
-    if (sec.I <= 0) {
+    if (sec.Ix < 0) {
       errors.push({
         type: 'validation',
-        message: `断面 "${sec.name}" の断面二次モーメント I が正でありません (I=${sec.I})。`,
+        message: `断面 "${sec.name}" のねじり定数 Ix が負です (Ix=${sec.Ix})。`,
+        elementId: sec.id,
+      });
+    }
+    if (sec.Iy <= 0) {
+      errors.push({
+        type: 'validation',
+        message: `断面 "${sec.name}" の断面二次モーメント Iy が正でありません (Iy=${sec.Iy})。`,
+        elementId: sec.id,
+      });
+    }
+    if (sec.Iz <= 0) {
+      errors.push({
+        type: 'validation',
+        message: `断面 "${sec.name}" の断面二次モーメント Iz が正でありません (Iz=${sec.Iz})。`,
         elementId: sec.id,
       });
     }
@@ -64,7 +85,6 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
 
   // Check: members
   for (const m of model.members) {
-    // Node references
     if (!nodeIds.has(m.ni)) {
       errors.push({
         type: 'validation',
@@ -80,13 +100,14 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
       });
     }
 
-    // Zero-length member
+    // Zero-length member (3D distance)
     const ni = model.nodes.find((n) => n.id === m.ni);
     const nj = model.nodes.find((n) => n.id === m.nj);
     if (ni && nj) {
       const dx = nj.x - ni.x;
       const dy = nj.y - ni.y;
-      const L = Math.sqrt(dx * dx + dy * dy);
+      const dz = nj.z - ni.z;
+      const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
       if (L < 1e-10) {
         errors.push({
           type: 'validation',
@@ -94,15 +115,6 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
           elementId: m.id,
         });
       }
-    }
-
-    // Material reference
-    if (!model.materials.some((mat) => mat.id === m.materialId)) {
-      errors.push({
-        type: 'validation',
-        message: `部材 ${m.id} の材料 ${m.materialId} が見つかりません。`,
-        elementId: m.id,
-      });
     }
 
     // Section reference
@@ -115,18 +127,19 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
     }
   }
 
-  // Check: constraint sufficiency
+  // Check: constraint sufficiency (3 translational directions)
   const hasUx = model.nodes.some((n) => n.restraint.ux);
   const hasUy = model.nodes.some((n) => n.restraint.uy);
-  if (!hasUx || !hasUy) {
+  const hasUz = model.nodes.some((n) => n.restraint.uz);
+  if (!hasUx || !hasUy || !hasUz) {
     errors.push({
       type: 'validation',
       message:
-        '拘束不足の可能性があります。少なくともX方向とY方向の並進拘束が必要です。',
+        '拘束不足の可能性があります。少なくともX, Y, Z 各方向の並進拘束が必要です。',
     });
   }
 
-  // Check: isolated nodes (nodes not connected to any member)
+  // Check: isolated nodes
   const connectedNodes = new Set<string>();
   for (const m of model.members) {
     connectedNodes.add(m.ni);
@@ -151,25 +164,6 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
         message: `部材荷重 ${ml.id} の対象部材 ${ml.memberId} が見つかりません。`,
         elementId: ml.id,
       });
-    }
-    if (ml.type === 'point') {
-      const member = model.members.find((m) => m.id === ml.memberId);
-      if (member) {
-        const ni = model.nodes.find((n) => n.id === member.ni);
-        const nj = model.nodes.find((n) => n.id === member.nj);
-        if (ni && nj) {
-          const dx = nj.x - ni.x;
-          const dy = nj.y - ni.y;
-          const L = Math.sqrt(dx * dx + dy * dy);
-          if (ml.a < -1e-10 || ml.a > L + 1e-10) {
-            errors.push({
-              type: 'validation',
-              message: `部材荷重 ${ml.id} の作用位置 a=${ml.a} が部材長 L=${L.toFixed(3)} の範囲外です。`,
-              elementId: ml.id,
-            });
-          }
-        }
-      }
     }
   }
 

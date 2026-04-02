@@ -12,7 +12,7 @@ import { generateAllDiagrams } from './diagrams';
 
 /**
  * Main analysis entry point.
- * Performs linear elastic 2D frame analysis.
+ * Performs linear elastic 3D frame analysis.
  */
 export function analyzeFrame(input: AnalysisInput): AnalysisOutput {
   const { model } = input;
@@ -51,16 +51,24 @@ export function analyzeFrame(input: AnalysisInput): AnalysisOutput {
     }
   }
 
-  // 7. Compute reactions
+  // 5. Copy master displacements to slave DOFs (coupling)
+  const { dofMap } = model;
+  for (let i = 0; i < n; i++) {
+    if (dofMap[i] !== i) {
+      d[i] = d[dofMap[i]!]!;
+    }
+  }
+
+  // 6. Compute reactions
   const reactions = computeReactions(K, d, F, n, fixedDofs);
 
-  // 8. Compute element end forces
+  // 6. Compute element end forces
   const elementEndForces = computeAllElementEndForces(model, d);
 
-  // 9. Generate diagrams
+  // 7. Generate diagrams
   const diagrams = generateAllDiagrams(model, elementEndForces, d);
 
-  // 10. Check for warnings
+  // 8. Check for warnings
   for (let i = 0; i < n; i++) {
     if (Math.abs(d[i]!) > 1e6) {
       warnings.push(

@@ -27,12 +27,8 @@ export const PropertyPanel: React.FC = () => {
   const setDiagramScale = useViewStore((s) => s.setDiagramScale);
   const showNodeLabels = useViewStore((s) => s.showNodeLabels);
   const showMemberLabels = useViewStore((s) => s.showMemberLabels);
-  const showLoads = useViewStore((s) => s.showLoads);
-  const showSupports = useViewStore((s) => s.showSupports);
   const setShowNodeLabels = useViewStore((s) => s.setShowNodeLabels);
   const setShowMemberLabels = useViewStore((s) => s.setShowMemberLabels);
-  const setShowLoads = useViewStore((s) => s.setShowLoads);
-  const setShowSupports = useViewStore((s) => s.setShowSupports);
 
   const t = useT();
 
@@ -49,7 +45,7 @@ export const PropertyPanel: React.FC = () => {
           nodalLoads={model.nodalLoads.filter((l) => l.nodeId === selectedNodes[0]!.id)}
           onUpdate={updateNode}
           onDelete={removeNode}
-          onAddLoad={(nodeId) => addNodalLoad({ nodeId, fx: 0, fy: -10, mz: 0 })}
+          onAddLoad={(nodeId) => addNodalLoad({ nodeId, fx: 0, fy: 0, fz: -10, mx: 0, my: 0, mz: 0 })}
           onUpdateLoad={updateNodalLoad}
           onRemoveLoad={removeNodalLoad}
         />
@@ -72,10 +68,9 @@ export const PropertyPanel: React.FC = () => {
 
       {selectedNodes.length === 0 && selectedMembers.length === 0 && (
         <>
-          <UnitsEditor />
           <MaterialsEditor />
           <SectionsEditor />
-          <LoadsOverview />
+          <CouplingsEditor />
           <div className="prop-group">
             <div className="prop-title">{t('prop.displaySettings')}</div>
             <label className="checkbox-label">
@@ -86,34 +81,15 @@ export const PropertyPanel: React.FC = () => {
               <input type="checkbox" checked={showMemberLabels} onChange={(e) => setShowMemberLabels(e.target.checked)} />
               {t('prop.memberLabels')}
             </label>
-            <label className="checkbox-label">
-              <input type="checkbox" checked={showLoads} onChange={(e) => setShowLoads(e.target.checked)} />
-              {t('prop.showLoads')}
-            </label>
-            <label className="checkbox-label">
-              <input type="checkbox" checked={showSupports} onChange={(e) => setShowSupports(e.target.checked)} />
-              {t('prop.supports')}
-            </label>
           </div>
           <div className="prop-group">
             <div className="prop-title">{t('prop.scale')}</div>
             <label>{t('prop.deformScale')} {deformationScale.toFixed(0)}</label>
-            <input
-              type="range"
-              min="1"
-              max="500"
-              value={deformationScale}
-              onChange={(e) => setDeformationScale(Number(e.target.value))}
-            />
+            <input type="range" min="1" max="500" value={deformationScale}
+              onChange={(e) => setDeformationScale(Number(e.target.value))} />
             <label>{t('prop.diagramScale')} {diagramScale.toFixed(1)}</label>
-            <input
-              type="range"
-              min="0.1"
-              max="10"
-              step="0.1"
-              value={diagramScale}
-              onChange={(e) => setDiagramScale(Number(e.target.value))}
-            />
+            <input type="range" min="0.1" max="10" step="0.1" value={diagramScale}
+              onChange={(e) => setDiagramScale(Number(e.target.value))} />
           </div>
           <ModelSummary />
         </>
@@ -125,101 +101,51 @@ export const PropertyPanel: React.FC = () => {
 const NodeProperties: React.FC<{
   node: StructuralNode;
   nodalLoads: NodalLoad[];
-  onUpdate: (id: string, u: Partial<Pick<StructuralNode, 'x' | 'y' | 'restraint'>>) => void;
+  onUpdate: (id: string, u: Partial<Pick<StructuralNode, 'x' | 'y' | 'z' | 'restraint'>>) => void;
   onDelete: (id: string) => void;
   onAddLoad: (nodeId: string) => void;
   onUpdateLoad: (id: string, updates: Partial<Omit<NodalLoad, 'id'>>) => void;
   onRemoveLoad: (id: string) => void;
 }> = ({ node, nodalLoads, onUpdate, onDelete, onAddLoad, onUpdateLoad, onRemoveLoad }) => {
   const t = useT();
+  const restraintKeys = ['ux', 'uy', 'uz', 'rx', 'ry', 'rz'] as const;
+  const restraintLabels = {
+    ux: t('prop.dirX'), uy: t('prop.dirY'), uz: t('prop.dirZ'),
+    rx: t('prop.rotX'), ry: t('prop.rotY'), rz: t('prop.rotZ'),
+  };
+
   return (
     <div className="prop-group">
       <div className="prop-title">{t('prop.node')} {node.id.substring(0, 5)}</div>
-      <div className="prop-row">
-        <label>X:</label>
-        <input
-          type="number"
-          value={node.x}
-          step="0.1"
-          onChange={(e) => onUpdate(node.id, { x: Number(e.target.value) })}
-        />
-      </div>
-      <div className="prop-row">
-        <label>Y:</label>
-        <input
-          type="number"
-          value={node.y}
-          step="0.1"
-          onChange={(e) => onUpdate(node.id, { y: Number(e.target.value) })}
-        />
-      </div>
+      {(['x', 'y', 'z'] as const).map((axis) => (
+        <div className="prop-row" key={axis}>
+          <label>{axis.toUpperCase()}:</label>
+          <input type="number" value={node[axis]} step="1"
+            onChange={(e) => onUpdate(node.id, { [axis]: Number(e.target.value) })} />
+        </div>
+      ))}
       <div className="prop-title">{t('prop.restraints')}</div>
-      <label className="checkbox-label">
-        <input
-          type="checkbox"
-          checked={node.restraint.ux}
-          onChange={(e) =>
-            onUpdate(node.id, { restraint: { ...node.restraint, ux: e.target.checked } })
-          }
-        />
-        {t('prop.dirX')}
-      </label>
-      <label className="checkbox-label">
-        <input
-          type="checkbox"
-          checked={node.restraint.uy}
-          onChange={(e) =>
-            onUpdate(node.id, { restraint: { ...node.restraint, uy: e.target.checked } })
-          }
-        />
-        {t('prop.dirY')}
-      </label>
-      <label className="checkbox-label">
-        <input
-          type="checkbox"
-          checked={node.restraint.rz}
-          onChange={(e) =>
-            onUpdate(node.id, { restraint: { ...node.restraint, rz: e.target.checked } })
-          }
-        />
-        {t('prop.rotation')}
-      </label>
+      {restraintKeys.map((key) => (
+        <label className="checkbox-label" key={key}>
+          <input type="checkbox" checked={node.restraint[key]}
+            onChange={(e) => onUpdate(node.id, { restraint: { ...node.restraint, [key]: e.target.checked } })} />
+          {restraintLabels[key]}
+        </label>
+      ))}
       <div className="prop-title">{t('prop.nodalLoads')}</div>
-      {nodalLoads.length === 0 && (
-        <div className="muted">{t('prop.noLoads')}</div>
-      )}
+      {nodalLoads.length === 0 && <div className="muted">{t('prop.noLoads')}</div>}
       {nodalLoads.map((load) => (
-            <div key={load.id} className="load-item">
-              <div className="prop-row">
-                <label>Fx:</label>
-                <input
-                  type="number"
-                  value={load.fx}
-                  step="1"
-                  onChange={(e) => onUpdateLoad(load.id, { fx: Number(e.target.value) })}
-                />
-              </div>
-              <div className="prop-row">
-                <label>Fy:</label>
-                <input
-                  type="number"
-                  value={load.fy}
-                  step="1"
-                  onChange={(e) => onUpdateLoad(load.id, { fy: Number(e.target.value) })}
-                />
-              </div>
-              <div className="prop-row">
-                <label>Mz:</label>
-                <input
-                  type="number"
-                  value={load.mz}
-                  step="1"
-                  onChange={(e) => onUpdateLoad(load.id, { mz: Number(e.target.value) })}
-                />
-              </div>
-              <button className="danger small" onClick={() => onRemoveLoad(load.id)}>{t('prop.removeLoad')}</button>
+        <div key={load.id} className="load-item">
+          {(['fx', 'fy', 'fz', 'mx', 'my', 'mz'] as const).map((f) => (
+            <div className="prop-row" key={f}>
+              <label>{f}:</label>
+              <input type="number" value={load[f]} step="1"
+                onChange={(e) => onUpdateLoad(load.id, { [f]: Number(e.target.value) })} />
             </div>
           ))}
+          <button className="danger small" onClick={() => onRemoveLoad(load.id)}>{t('prop.removeLoad')}</button>
+        </div>
+      ))}
       <div className="prop-actions">
         <button onClick={() => onAddLoad(node.id)}>{t('prop.addLoad')}</button>
         <button className="danger" onClick={() => onDelete(node.id)}>{t('prop.delete')}</button>
@@ -232,7 +158,7 @@ const MemberProperties: React.FC<{
   member: Member;
   model: import('../../core/model/types').ProjectModel;
   memberLoads: MemberLoad[];
-  onUpdate: (id: string, u: Partial<Pick<Member, 'materialId' | 'sectionId'>>) => void;
+  onUpdate: (id: string, u: Partial<Pick<Member, 'sectionId' | 'codeAngle'>>) => void;
   onDelete: (id: string) => void;
   onAddLoad: (memberId: string) => void;
   onUpdateLoad: (id: string, updates: Partial<Omit<MemberLoad, 'id'>>) => void;
@@ -241,131 +167,76 @@ const MemberProperties: React.FC<{
   const t = useT();
   const ni = model.nodes.find((n) => n.id === member.ni);
   const nj = model.nodes.find((n) => n.id === member.nj);
-  const L = ni && nj ? Math.sqrt((nj.x - ni.x) ** 2 + (nj.y - ni.y) ** 2) : 0;
+  const L = ni && nj ? Math.sqrt((nj.x - ni.x) ** 2 + (nj.y - ni.y) ** 2 + (nj.z - ni.z) ** 2) : 0;
 
   return (
     <div className="prop-group">
       <div className="prop-title">{t('prop.member')} {member.id.substring(0, 5)}</div>
-      <div className="prop-row">
-        <label>{t('prop.length')}</label>
-        <span>{L.toFixed(3)} m</span>
-      </div>
-      <div className="prop-row">
-        <label>{t('prop.material')}</label>
-        <select
-          value={member.materialId}
-          onChange={(e) => onUpdate(member.id, { materialId: e.target.value })}
-        >
-          {model.materials.map((m) => (
-            <option key={m.id} value={m.id}>{m.name}</option>
-          ))}
-        </select>
-      </div>
+      <div className="prop-row"><label>{t('prop.length')}</label><span>{L.toFixed(3)}</span></div>
       <div className="prop-row">
         <label>{t('prop.section')}</label>
-        <select
-          value={member.sectionId}
-          onChange={(e) => onUpdate(member.id, { sectionId: e.target.value })}
-        >
+        <select value={member.sectionId}
+          onChange={(e) => onUpdate(member.id, { sectionId: e.target.value })}>
           {model.sections.map((s) => (
             <option key={s.id} value={s.id}>{s.name}</option>
           ))}
         </select>
       </div>
+      <div className="prop-row">
+        <label>{t('prop.codeAngle')}</label>
+        <input type="number" value={member.codeAngle} step="1"
+          onChange={(e) => onUpdate(member.id, { codeAngle: Number(e.target.value) })} />
+      </div>
       <div className="prop-title">{t('prop.memberLoads')}</div>
-      {memberLoads.length === 0 && (
-        <div className="muted">{t('prop.noLoads')}</div>
-      )}
-      {memberLoads.map((load) => (
-            <div key={load.id} className="load-item">
-              <div className="prop-row">
-                <label>{t('prop.loadType')}</label>
-                <select
-                  value={load.type}
-                  onChange={(e) => {
-                    const newType = e.target.value as 'udl' | 'point';
-                    if (newType === 'point') {
-                      onUpdateLoad(load.id, { type: 'point', a: 0 } as Partial<Omit<MemberLoad, 'id'>>);
-                    } else {
-                      onUpdateLoad(load.id, { type: 'udl' } as Partial<Omit<MemberLoad, 'id'>>);
-                    }
-                  }}
-                >
-                  <option value="udl">{t('prop.loadTypeUdl')}</option>
-                  <option value="point">{t('prop.loadTypePoint')}</option>
-                </select>
-              </div>
-              <div className="prop-row">
-                <label>{t('prop.loadDirection')}</label>
-                <select
-                  value={load.direction}
-                  onChange={(e) => onUpdateLoad(load.id, { direction: e.target.value as 'localX' | 'localY' })}
-                >
-                  <option value="localY">localY</option>
-                  <option value="localX">localX</option>
-                </select>
-              </div>
-              <div className="prop-row">
-                <label>{load.type === 'udl' ? t('prop.loadIntensity') : t('prop.loadMagnitude')}</label>
-                <input
-                  type="number"
-                  value={load.value}
-                  step="1"
-                  onChange={(e) => onUpdateLoad(load.id, { value: Number(e.target.value) })}
-                />
-              </div>
-              {load.type === 'point' && (
-                <div className="prop-row">
-                  <label>{t('prop.loadPosition')}</label>
-                  <input
-                    type="number"
-                    value={load.a}
-                    step="0.1"
-                    min="0"
-                    max={L}
-                    onChange={(e) => onUpdateLoad(load.id, { a: Number(e.target.value) } as Partial<Omit<MemberLoad, 'id'>>)}
-                  />
-                </div>
-              )}
-              <button className="danger small" onClick={() => onRemoveLoad(load.id)}>{t('prop.removeLoad')}</button>
+      {memberLoads.length === 0 && <div className="muted">{t('prop.noLoads')}</div>}
+      {memberLoads.filter(l => l.type !== 'cmq').map((load) => (
+        <div key={load.id} className="load-item">
+          <div className="prop-row">
+            <label>{t('prop.loadType')}</label>
+            <select value={load.type}
+              onChange={(e) => {
+                const newType = e.target.value as 'udl' | 'point';
+                if (newType === 'point') {
+                  onUpdateLoad(load.id, { type: 'point', a: 0 } as Partial<Omit<MemberLoad, 'id'>>);
+                } else {
+                  onUpdateLoad(load.id, { type: 'udl' } as Partial<Omit<MemberLoad, 'id'>>);
+                }
+              }}>
+              <option value="udl">{t('prop.loadTypeUdl')}</option>
+              <option value="point">{t('prop.loadTypePoint')}</option>
+            </select>
+          </div>
+          {'direction' in load && (
+            <div className="prop-row">
+              <label>{t('prop.loadDirection')}</label>
+              <select value={load.direction}
+                onChange={(e) => onUpdateLoad(load.id, { direction: e.target.value as 'localX' | 'localY' | 'localZ' })}>
+                <option value="localY">localY</option>
+                <option value="localZ">localZ</option>
+                <option value="localX">localX</option>
+              </select>
             </div>
-          ))}
+          )}
+          {'value' in load && (
+            <div className="prop-row">
+              <label>{load.type === 'udl' ? t('prop.loadIntensity') : t('prop.loadMagnitude')}</label>
+              <input type="number" value={load.value} step="1"
+                onChange={(e) => onUpdateLoad(load.id, { value: Number(e.target.value) })} />
+            </div>
+          )}
+          {load.type === 'point' && 'a' in load && (
+            <div className="prop-row">
+              <label>{t('prop.loadPosition')}</label>
+              <input type="number" value={load.a} step="0.1" min="0" max={L}
+                onChange={(e) => onUpdateLoad(load.id, { a: Number(e.target.value) } as Partial<Omit<MemberLoad, 'id'>>)} />
+            </div>
+          )}
+          <button className="danger small" onClick={() => onRemoveLoad(load.id)}>{t('prop.removeLoad')}</button>
+        </div>
+      ))}
       <div className="prop-actions">
         <button onClick={() => onAddLoad(member.id)}>{t('prop.addLoad')}</button>
         <button className="danger" onClick={() => onDelete(member.id)}>{t('prop.delete')}</button>
-      </div>
-    </div>
-  );
-};
-
-const UnitsEditor: React.FC = () => {
-  const model = useProjectStore((s) => s.model);
-  const updateUnits = useProjectStore((s) => s.updateUnits);
-  const t = useT();
-
-  return (
-    <div className="prop-group">
-      <div className="prop-title">{t('prop.units')}</div>
-      <div className="prop-row">
-        <label>{t('prop.forceUnit')}</label>
-        <select
-          value={model.units.force}
-          onChange={(e) => updateUnits({ force: e.target.value })}
-        >
-          <option value="N">N</option>
-          <option value="kN">kN</option>
-        </select>
-      </div>
-      <div className="prop-row">
-        <label>{t('prop.lengthUnit')}</label>
-        <select
-          value={model.units.length}
-          onChange={(e) => updateUnits({ length: e.target.value })}
-        >
-          <option value="mm">mm</option>
-          <option value="cm">cm</option>
-          <option value="m">m</option>
-        </select>
       </div>
     </div>
   );
@@ -378,7 +249,7 @@ const MaterialsEditor: React.FC = () => {
   const removeMaterial = useProjectStore((s) => s.removeMaterial);
   const t = useT();
 
-  const inUseIds = new Set(model.members.map((m) => m.materialId));
+  const inUseIds = new Set(model.sections.map((s) => s.materialId));
 
   return (
     <div className="prop-group">
@@ -387,31 +258,23 @@ const MaterialsEditor: React.FC = () => {
         <div key={mat.id} className="editable-item">
           <div className="prop-row">
             <label>{t('prop.matName')}</label>
-            <input
-              type="text"
-              value={mat.name}
-              onChange={(e) => updateMaterial(mat.id, { name: e.target.value })}
-            />
+            <input type="text" value={mat.name}
+              onChange={(e) => updateMaterial(mat.id, { name: e.target.value })} />
           </div>
           <div className="prop-row">
             <label>{t('prop.matE')}</label>
-            <input
-              type="number"
-              value={mat.E}
-              step="1000"
-              onChange={(e) => updateMaterial(mat.id, { E: Number(e.target.value) })}
-            />
+            <input type="number" value={mat.E} step="100"
+              onChange={(e) => updateMaterial(mat.id, { E: Number(e.target.value) })} />
+          </div>
+          <div className="prop-row">
+            <label>{t('prop.matG')}</label>
+            <input type="number" value={mat.G} step="100"
+              onChange={(e) => updateMaterial(mat.id, { G: Number(e.target.value) })} />
           </div>
           <div className="prop-row">
             <label>{t('prop.matNu')}</label>
-            <input
-              type="number"
-              value={mat.nu ?? 0.3}
-              step="0.01"
-              min="0"
-              max="0.5"
-              onChange={(e) => updateMaterial(mat.id, { nu: Number(e.target.value) })}
-            />
+            <input type="number" value={mat.nu} step="0.01" min="0" max="0.5"
+              onChange={(e) => updateMaterial(mat.id, { nu: Number(e.target.value) })} />
           </div>
           {!inUseIds.has(mat.id) && (
             <button className="danger small" onClick={() => removeMaterial(mat.id)}>
@@ -421,7 +284,7 @@ const MaterialsEditor: React.FC = () => {
         </div>
       ))}
       <div className="prop-actions">
-        <button onClick={() => addMaterial({ name: 'New', E: 205000, nu: 0.3 })}>
+        <button onClick={() => addMaterial({ name: 'New', E: 20500, G: 7900, nu: 0.3, expansion: 0 })}>
           {t('prop.addMaterial')}
         </button>
       </div>
@@ -437,6 +300,7 @@ const SectionsEditor: React.FC = () => {
   const t = useT();
 
   const inUseIds = new Set(model.members.map((m) => m.sectionId));
+  const matId = model.materials[0]?.id ?? '';
 
   return (
     <div className="prop-group">
@@ -445,38 +309,28 @@ const SectionsEditor: React.FC = () => {
         <div key={sec.id} className="editable-item">
           <div className="prop-row">
             <label>{t('prop.secName')}</label>
-            <input
-              type="text"
-              value={sec.name}
-              onChange={(e) => updateSection(sec.id, { name: e.target.value })}
-            />
+            <input type="text" value={sec.name}
+              onChange={(e) => updateSection(sec.id, { name: e.target.value })} />
           </div>
           <div className="prop-row">
             <label>{t('prop.secA')}</label>
-            <input
-              type="number"
-              value={sec.A}
-              step="0.001"
-              onChange={(e) => updateSection(sec.id, { A: Number(e.target.value) })}
-            />
+            <input type="number" value={sec.A} step="1"
+              onChange={(e) => updateSection(sec.id, { A: Number(e.target.value) })} />
           </div>
           <div className="prop-row">
-            <label>{t('prop.secI')}</label>
-            <input
-              type="number"
-              value={sec.I}
-              step="0.0001"
-              onChange={(e) => updateSection(sec.id, { I: Number(e.target.value) })}
-            />
+            <label>{t('prop.secIx')}</label>
+            <input type="number" value={sec.Ix} step="1"
+              onChange={(e) => updateSection(sec.id, { Ix: Number(e.target.value) })} />
           </div>
           <div className="prop-row">
-            <label>{t('prop.secAs')}</label>
-            <input
-              type="number"
-              value={sec.As ?? sec.A}
-              step="0.001"
-              onChange={(e) => updateSection(sec.id, { As: Number(e.target.value) })}
-            />
+            <label>{t('prop.secIy')}</label>
+            <input type="number" value={sec.Iy} step="1"
+              onChange={(e) => updateSection(sec.id, { Iy: Number(e.target.value) })} />
+          </div>
+          <div className="prop-row">
+            <label>{t('prop.secIz')}</label>
+            <input type="number" value={sec.Iz} step="1"
+              onChange={(e) => updateSection(sec.id, { Iz: Number(e.target.value) })} />
           </div>
           {!inUseIds.has(sec.id) && (
             <button className="danger small" onClick={() => removeSection(sec.id)}>
@@ -486,7 +340,7 @@ const SectionsEditor: React.FC = () => {
         </div>
       ))}
       <div className="prop-actions">
-        <button onClick={() => addSection({ name: 'New', A: 0.01, I: 1e-4, As: 0.005 })}>
+        <button onClick={() => addSection({ name: 'New', materialId: matId, A: 100, Ix: 1000, Iy: 500, Iz: 500, ky: 0, kz: 0 })}>
           {t('prop.addSection')}
         </button>
       </div>
@@ -494,125 +348,65 @@ const SectionsEditor: React.FC = () => {
   );
 };
 
-const LoadsOverview: React.FC = () => {
+const CouplingsEditor: React.FC = () => {
   const model = useProjectStore((s) => s.model);
-  const updateNodalLoad = useProjectStore((s) => s.updateNodalLoad);
-  const removeNodalLoad = useProjectStore((s) => s.removeNodalLoad);
-  const updateMemberLoad = useProjectStore((s) => s.updateMemberLoad);
-  const removeMemberLoad = useProjectStore((s) => s.removeMemberLoad);
-  const selectNode = useSelectionStore((s) => s.selectNode);
-  const selectMember = useSelectionStore((s) => s.selectMember);
-  const t = useT();
+  const addCoupling = useProjectStore((s) => s.addCoupling);
+  const updateCoupling = useProjectStore((s) => s.updateCoupling);
+  const removeCoupling = useProjectStore((s) => s.removeCoupling);
 
-  const nodeLabel = (nodeId: string) => {
-    const idx = model.nodes.findIndex((n) => n.id === nodeId);
-    return idx >= 0 ? `N${idx}` : nodeId.substring(0, 5);
-  };
-  const memberLabel = (memberId: string) => {
-    const idx = model.members.findIndex((m) => m.id === memberId);
-    return idx >= 0 ? `M${idx}` : memberId.substring(0, 5);
-  };
-  const getMemberLength = (memberId: string) => {
-    const member = model.members.find((m) => m.id === memberId);
-    if (!member) return 0;
-    const ni = model.nodes.find((n) => n.id === member.ni);
-    const nj = model.nodes.find((n) => n.id === member.nj);
-    return ni && nj ? Math.sqrt((nj.x - ni.x) ** 2 + (nj.y - ni.y) ** 2) : 0;
-  };
+  const couplings = model.couplings ?? [];
+  const nodeOptions = model.nodes.map(n => n.id);
+  const dofKeys = ['ux', 'uy', 'uz', 'rx', 'ry', 'rz'] as const;
 
   return (
-    <>
-      <div className="prop-group">
-        <div className="prop-title">{t('prop.allNodalLoads')}</div>
-        {model.nodalLoads.length === 0 && (
-          <div className="muted">{t('prop.noLoads')}</div>
-        )}
-        {model.nodalLoads.map((load) => (
-          <div key={load.id} className="load-item">
-            <div className="prop-row">
-              <label>{t('prop.targetNode')}</label>
-              <span className="link-text" onClick={() => selectNode(load.nodeId)}>{nodeLabel(load.nodeId)}</span>
-            </div>
-            <div className="prop-row">
-              <label>Fx:</label>
-              <input type="number" value={load.fx} step="1"
-                onChange={(e) => updateNodalLoad(load.id, { fx: Number(e.target.value) })} />
-            </div>
-            <div className="prop-row">
-              <label>Fy:</label>
-              <input type="number" value={load.fy} step="1"
-                onChange={(e) => updateNodalLoad(load.id, { fy: Number(e.target.value) })} />
-            </div>
-            <div className="prop-row">
-              <label>Mz:</label>
-              <input type="number" value={load.mz} step="1"
-                onChange={(e) => updateNodalLoad(load.id, { mz: Number(e.target.value) })} />
-            </div>
-            <button className="danger small" onClick={() => removeNodalLoad(load.id)}>{t('prop.removeLoad')}</button>
+    <div className="prop-group">
+      <div className="prop-title">Coupling</div>
+      {couplings.length === 0 && <div className="muted">No couplings</div>}
+      {couplings.map((c) => (
+        <div key={c.id} className="editable-item">
+          <div className="prop-row">
+            <label>Master:</label>
+            <select value={c.masterNodeId}
+              onChange={(e) => updateCoupling(c.id, { masterNodeId: e.target.value })}>
+              {nodeOptions.map(id => <option key={id} value={id}>{id}</option>)}
+            </select>
           </div>
-        ))}
+          <div className="prop-row">
+            <label>Slave:</label>
+            <select value={c.slaveNodeId}
+              onChange={(e) => updateCoupling(c.id, { slaveNodeId: e.target.value })}>
+              {nodeOptions.map(id => <option key={id} value={id}>{id}</option>)}
+            </select>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 8px' }}>
+            {dofKeys.map(k => (
+              <label className="checkbox-label" key={k} style={{ fontSize: '0.85em' }}>
+                <input type="checkbox" checked={c[k]}
+                  onChange={(e) => updateCoupling(c.id, { [k]: e.target.checked })} />
+                {k}
+              </label>
+            ))}
+          </div>
+          <button className="danger small" onClick={() => removeCoupling(c.id)}>Remove</button>
+        </div>
+      ))}
+      <div className="prop-actions">
+        <button onClick={() => {
+          const n0 = nodeOptions[0] ?? '';
+          const n1 = nodeOptions[1] ?? n0;
+          addCoupling({ masterNodeId: n0, slaveNodeId: n1, ux: true, uy: true, uz: true, rx: true, ry: true, rz: true });
+        }}>
+          Add Coupling
+        </button>
       </div>
-      <div className="prop-group">
-        <div className="prop-title">{t('prop.allMemberLoads')}</div>
-        {model.memberLoads.length === 0 && (
-          <div className="muted">{t('prop.noLoads')}</div>
-        )}
-        {model.memberLoads.map((load) => {
-          const L = getMemberLength(load.memberId);
-          return (
-            <div key={load.id} className="load-item">
-              <div className="prop-row">
-                <label>{t('prop.targetMember')}</label>
-                <span className="link-text" onClick={() => selectMember(load.memberId)}>{memberLabel(load.memberId)}</span>
-              </div>
-              <div className="prop-row">
-                <label>{t('prop.loadType')}</label>
-                <select value={load.type}
-                  onChange={(e) => {
-                    const newType = e.target.value as 'udl' | 'point';
-                    if (newType === 'point') {
-                      updateMemberLoad(load.id, { type: 'point', a: 0 } as Partial<Omit<MemberLoad, 'id'>>);
-                    } else {
-                      updateMemberLoad(load.id, { type: 'udl' } as Partial<Omit<MemberLoad, 'id'>>);
-                    }
-                  }}>
-                  <option value="udl">{t('prop.loadTypeUdl')}</option>
-                  <option value="point">{t('prop.loadTypePoint')}</option>
-                </select>
-              </div>
-              <div className="prop-row">
-                <label>{t('prop.loadDirection')}</label>
-                <select value={load.direction}
-                  onChange={(e) => updateMemberLoad(load.id, { direction: e.target.value as 'localX' | 'localY' })}>
-                  <option value="localY">localY</option>
-                  <option value="localX">localX</option>
-                </select>
-              </div>
-              <div className="prop-row">
-                <label>{load.type === 'udl' ? t('prop.loadIntensity') : t('prop.loadMagnitude')}</label>
-                <input type="number" value={load.value} step="1"
-                  onChange={(e) => updateMemberLoad(load.id, { value: Number(e.target.value) })} />
-              </div>
-              {load.type === 'point' && (
-                <div className="prop-row">
-                  <label>{t('prop.loadPosition')}</label>
-                  <input type="number" value={load.a} step="0.1" min="0" max={L}
-                    onChange={(e) => updateMemberLoad(load.id, { a: Number(e.target.value) } as Partial<Omit<MemberLoad, 'id'>>)} />
-                </div>
-              )}
-              <button className="danger small" onClick={() => removeMemberLoad(load.id)}>{t('prop.removeLoad')}</button>
-            </div>
-          );
-        })}
-      </div>
-    </>
+    </div>
   );
 };
 
 const ModelSummary: React.FC = () => {
   const model = useProjectStore((s) => s.model);
-  const analysisResult = useProjectStore((s) => s.analysisResult);
   const analysisError = useProjectStore((s) => s.analysisError);
+  const analysisResult = useProjectStore((s) => s.analysisResult);
   const isResultStale = useProjectStore((s) => s.isResultStale);
   const t = useT();
 

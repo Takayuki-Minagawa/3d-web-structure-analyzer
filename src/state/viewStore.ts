@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type DisplayMode = 'model' | 'deformation' | 'axial' | 'shear' | 'moment';
+export type DisplayMode = 'model' | 'deformation' | 'N' | 'Vy' | 'Vz' | 'Mx' | 'My' | 'Mz';
 export type EditTool = 'select' | 'addNode' | 'addMember' | 'setSupport' | 'addNodalLoad' | 'addMemberLoad';
 export type Theme = 'dark' | 'light';
 

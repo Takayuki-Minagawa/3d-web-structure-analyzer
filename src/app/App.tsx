@@ -28,6 +28,7 @@ export const App: React.FC = () => {
   const setAnalysisResult = useProjectStore((s) => s.setAnalysisResult);
   const isAnalyzing = useProjectStore((s) => s.isAnalyzing);
   const loadModel = useProjectStore((s) => s.loadModel);
+  const importJsonAuto = useProjectStore((s) => s.importJsonAuto);
   const resetModel = useProjectStore((s) => s.resetModel);
   const clearSelection = useSelectionStore((s) => s.clearSelection);
 
@@ -58,7 +59,6 @@ export const App: React.FC = () => {
   const runAnalysis = useCallback(() => {
     if (isAnalyzing) return;
 
-    // Create worker lazily
     if (!workerRef.current) {
       workerRef.current = new Worker(
         new URL('../worker/analysis.worker.ts', import.meta.url),
@@ -81,7 +81,7 @@ export const App: React.FC = () => {
 
   const handleExport = useCallback(() => {
     const file: ProjectFile = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       savedAt: new Date().toISOString(),
       model,
     };
@@ -89,7 +89,7 @@ export const App: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'frame-model.json';
+    a.download = 'frame-model-3d.json';
     a.click();
     URL.revokeObjectURL(url);
   }, [model]);
@@ -104,11 +104,8 @@ export const App: React.FC = () => {
       const reader = new FileReader();
       reader.onload = () => {
         try {
-          const data = JSON.parse(reader.result as string) as ProjectFile;
-          if (data.model) {
-            clearSelection();
-            loadModel(data.model);
-          }
+          clearSelection();
+          importJsonAuto(reader.result as string);
         } catch {
           alert(t('app.importError'));
         }
@@ -116,34 +113,48 @@ export const App: React.FC = () => {
       reader.readAsText(file);
     };
     input.click();
-  }, [loadModel, t, clearSelection]);
+  }, [importJsonAuto, t, clearSelection]);
 
-  const handleLoadSample = useCallback(() => {
+  const handleLoadSample = useCallback(async () => {
+    try {
+      // Try to load the FrameJson sample
+      const resp = await fetch('./samples/FrameModel_Sample.json');
+      if (resp.ok) {
+        const text = await resp.text();
+        clearSelection();
+        importJsonAuto(text);
+        return;
+      }
+    } catch {
+      // fallback
+    }
+    // Fallback: simple 3D portal frame
     const sampleModel = {
+      title: 'Simple 3D Portal Frame',
       nodes: [
-        { id: 'n0', x: 0, y: 0, restraint: { ux: true, uy: true, rz: true } },
-        { id: 'n1', x: 0, y: 4, restraint: { ux: false, uy: false, rz: false } },
-        { id: 'n2', x: 6, y: 4, restraint: { ux: false, uy: false, rz: false } },
-        { id: 'n3', x: 6, y: 0, restraint: { ux: true, uy: true, rz: false } },
+        { id: 'n1', x: 0, y: 0, z: 0, restraint: { ux: true, uy: true, uz: true, rx: true, ry: true, rz: true } },
+        { id: 'n2', x: 0, y: 0, z: 400, restraint: { ux: false, uy: false, uz: false, rx: false, ry: false, rz: false } },
+        { id: 'n3', x: 600, y: 0, z: 400, restraint: { ux: false, uy: false, uz: false, rx: false, ry: false, rz: false } },
+        { id: 'n4', x: 600, y: 0, z: 0, restraint: { ux: true, uy: true, uz: true, rx: true, ry: true, rz: true } },
       ],
-      materials: [{ id: 'mat1', name: 'Steel', E: 205000, nu: 0.3 }],
-      sections: [{ id: 'sec1', name: 'H-200x100', A: 0.0027, I: 1.84e-5, As: 0.001 }],
+      materials: [{ id: 'mat1', name: 'Steel', E: 20500, G: 7900, nu: 0.3, expansion: 0.000012 }],
+      sections: [{ id: 'sec1', name: 'H-200x100', materialId: 'mat1', A: 27.16, Ix: 134, Iy: 1840, Iz: 134, ky: 0, kz: 0 }],
+      springs: [],
+      couplings: [],
       members: [
-        { id: 'm1', ni: 'n0', nj: 'n1', materialId: 'mat1', sectionId: 'sec1' },
-        { id: 'm2', ni: 'n1', nj: 'n2', materialId: 'mat1', sectionId: 'sec1' },
-        { id: 'm3', ni: 'n3', nj: 'n2', materialId: 'mat1', sectionId: 'sec1' },
+        { id: 'm1', ni: 'n1', nj: 'n2', sectionId: 'sec1', codeAngle: 0, iSprings: { x: 0, y: 0, z: 0 }, jSprings: { x: 0, y: 0, z: 0 } },
+        { id: 'm2', ni: 'n2', nj: 'n3', sectionId: 'sec1', codeAngle: 0, iSprings: { x: 0, y: 0, z: 0 }, jSprings: { x: 0, y: 0, z: 0 } },
+        { id: 'm3', ni: 'n4', nj: 'n3', sectionId: 'sec1', codeAngle: 0, iSprings: { x: 0, y: 0, z: 0 }, jSprings: { x: 0, y: 0, z: 0 } },
       ],
       nodalLoads: [
-        { id: 'nl1', nodeId: 'n1', fx: 10, fy: 0, mz: 0 },
+        { id: 'nl1', nodeId: 'n2', fx: 10, fy: 0, fz: 0, mx: 0, my: 0, mz: 0 },
       ],
-      memberLoads: [
-        { id: 'ml1', memberId: 'm2', type: 'udl' as const, direction: 'localY' as const, value: -8 },
-      ],
-      units: { force: 'kN', length: 'm', moment: 'kN·m' },
+      memberLoads: [],
+      units: { force: 'kN', length: 'cm', moment: 'kN·cm' },
     };
     clearSelection();
     loadModel(sampleModel);
-  }, [loadModel, clearSelection]);
+  }, [loadModel, importJsonAuto, clearSelection]);
 
   return (
     <div className="app-layout">

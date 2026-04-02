@@ -16,9 +16,12 @@ const tools: { id: EditTool; labelKey: TKey; icon: string }[] = [
 const displayModes: { id: DisplayMode; labelKey: TKey }[] = [
   { id: 'model', labelKey: 'display.model' },
   { id: 'deformation', labelKey: 'display.deformation' },
-  { id: 'axial', labelKey: 'display.axial' },
-  { id: 'shear', labelKey: 'display.shear' },
-  { id: 'moment', labelKey: 'display.moment' },
+  { id: 'N', labelKey: 'display.N' },
+  { id: 'Vy', labelKey: 'display.Vy' },
+  { id: 'Vz', labelKey: 'display.Vz' },
+  { id: 'Mx', labelKey: 'display.Mx' },
+  { id: 'My', labelKey: 'display.My' },
+  { id: 'Mz', labelKey: 'display.Mz' },
 ];
 
 export const Toolbar: React.FC<{ onRunAnalysis: () => void }> = ({ onRunAnalysis }) => {

@@ -3,6 +3,6 @@ import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: '/2d-web-structure-analyzer/',
+  base: '/3d-web-structure-analyzer/',
   plugins: [react()],
 })

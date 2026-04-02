@@ -2,6 +2,10 @@ import type { IndexedModel } from '../model/types';
 
 /**
  * Identify free (unconstrained) and fixed (constrained) DOF indices.
+ * DOF order per node: [ux, uy, uz, rx, ry, rz]
+ *
+ * Slave DOFs (coupled to a master) are excluded from both lists since
+ * their contributions are already redirected to the master DOF during assembly.
  */
 export function partitionDofs(model: IndexedModel): {
   freeDofs: number[];
@@ -9,26 +13,23 @@ export function partitionDofs(model: IndexedModel): {
 } {
   const freeDofs: number[] = [];
   const fixedDofs: number[] = [];
+  const { dofMap } = model;
 
   for (const node of model.nodes) {
-    const base = node.index * 3;
+    const base = node.index * 6;
+    const r = node.restraint;
+    const flags = [r.ux, r.uy, r.uz, r.rx, r.ry, r.rz];
 
-    if (node.restraint.ux) {
-      fixedDofs.push(base);
-    } else {
-      freeDofs.push(base);
-    }
+    for (let i = 0; i < 6; i++) {
+      const dof = base + i;
+      // Skip slave DOFs (they are mapped to a different master DOF)
+      if (dofMap[dof] !== dof) continue;
 
-    if (node.restraint.uy) {
-      fixedDofs.push(base + 1);
-    } else {
-      freeDofs.push(base + 1);
-    }
-
-    if (node.restraint.rz) {
-      fixedDofs.push(base + 2);
-    } else {
-      freeDofs.push(base + 2);
+      if (flags[i]) {
+        fixedDofs.push(dof);
+      } else {
+        freeDofs.push(dof);
+      }
     }
   }
 

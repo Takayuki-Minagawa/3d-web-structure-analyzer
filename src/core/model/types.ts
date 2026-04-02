@@ -3,40 +3,62 @@ export type NodeId = string;
 export type MemberId = string;
 export type MaterialId = string;
 export type SectionId = string;
+export type SpringId = string;
 
 // ── Model entities ──
+export interface Restraint {
+  ux: boolean;
+  uy: boolean;
+  uz: boolean;
+  rx: boolean;
+  ry: boolean;
+  rz: boolean;
+}
+
 export interface StructuralNode {
   id: NodeId;
   x: number;
   y: number;
-  restraint: {
-    ux: boolean;
-    uy: boolean;
-    rz: boolean;
-  };
+  z: number;
+  restraint: Restraint;
 }
 
 export interface Material {
   id: MaterialId;
   name: string;
-  E: number; // Young's modulus
-  nu: number; // Poisson's ratio
+  E: number;   // Young's modulus
+  G: number;   // Shear modulus
+  nu: number;  // Poisson's ratio
+  expansion: number; // Thermal expansion coefficient
 }
 
 export interface Section {
   id: SectionId;
   name: string;
-  A: number; // Cross-sectional area
-  I: number; // Second moment of area
-  As: number; // Shear area
+  materialId: MaterialId;
+  A: number;   // Cross-sectional area
+  Ix: number;  // Torsional moment of inertia
+  Iy: number;  // Second moment of area about local Y
+  Iz: number;  // Second moment of area about local Z
+  ky: number;  // Shear area ratio (Asy = ky * A)
+  kz: number;  // Shear area ratio (Asz = kz * A)
+}
+
+export interface Spring {
+  id: SpringId;
+  number: number;
+  method: number; // 0: rigid, 1: pin, etc.
+  kTheta: number; // Rotational spring stiffness
 }
 
 export interface Member {
   id: MemberId;
-  ni: NodeId; // i-end node
-  nj: NodeId; // j-end node
-  materialId: MaterialId;
+  ni: NodeId;  // i-end node
+  nj: NodeId;  // j-end node
   sectionId: SectionId;
+  codeAngle: number; // Rotation about member axis (degrees)
+  iSprings: { x: number; y: number; z: number }; // Spring numbers at i-end
+  jSprings: { x: number; y: number; z: number }; // Spring numbers at j-end
 }
 
 // ── Loads ──
@@ -45,10 +67,13 @@ export interface NodalLoad {
   nodeId: NodeId;
   fx: number;
   fy: number;
+  fz: number;
+  mx: number;
+  my: number;
   mz: number;
 }
 
-export type MemberLoadDirection = 'localX' | 'localY';
+export type MemberLoadDirection = 'localX' | 'localY' | 'localZ';
 
 export interface PointMemberLoad {
   id: string;
@@ -67,14 +92,51 @@ export interface UniformMemberLoad {
   value: number; // per unit length
 }
 
-export type MemberLoad = PointMemberLoad | UniformMemberLoad;
+export interface CMQMemberLoad {
+  id: string;
+  memberId: MemberId;
+  type: 'cmq';
+  // i-end forces/moments (local)
+  iQx: number;
+  iQy: number;
+  iQz: number;
+  iMy: number;
+  iMz: number;
+  // j-end forces/moments (local)
+  jQx: number;
+  jQy: number;
+  jQz: number;
+  jMy: number;
+  jMz: number;
+  // Mid-span moments
+  moy: number;
+  moz: number;
+}
+
+export type MemberLoad = PointMemberLoad | UniformMemberLoad | CMQMemberLoad;
+
+// ── Coupling constraints ──
+export interface CouplingConstraint {
+  id: string;
+  masterNodeId: NodeId;
+  slaveNodeId: NodeId;
+  ux: boolean;
+  uy: boolean;
+  uz: boolean;
+  rx: boolean;
+  ry: boolean;
+  rz: boolean;
+}
 
 // ── Project model ──
 export interface ProjectModel {
+  title: string;
   nodes: StructuralNode[];
   materials: Material[];
   sections: Section[];
+  springs: Spring[];
   members: Member[];
+  couplings: CouplingConstraint[];
   nodalLoads: NodalLoad[];
   memberLoads: MemberLoad[];
   units: {
@@ -97,7 +159,17 @@ export interface IndexedNode {
   id: NodeId;
   x: number;
   y: number;
-  restraint: { ux: boolean; uy: boolean; rz: boolean };
+  z: number;
+  restraint: Restraint;
+}
+
+/**
+ * End-release info for a single rotational DOF.
+ * type: 'rigid' = no release, 'pin' = free rotation, 'spring' = finite stiffness
+ */
+export interface EndRelease {
+  type: 'rigid' | 'pin' | 'spring';
+  kTheta: number; // only used when type === 'spring'
 }
 
 export interface IndexedMember {
@@ -106,13 +178,17 @@ export interface IndexedMember {
   ni: number; // node index
   nj: number; // node index
   E: number;
+  G: number;
   A: number;
-  I: number;
-  L: number; // length
-  cos: number; // direction cosine
-  sin: number; // direction sine
-  G: number; // shear modulus
-  As: number; // shear area
+  Ix: number; // Torsional moment of inertia
+  Iy: number; // Second moment about local Y
+  Iz: number; // Second moment about local Z
+  ky: number; // Shear area ratio Y
+  kz: number; // Shear area ratio Z
+  L: number;  // length
+  lambda: Float64Array; // 3x3 rotation matrix (9 elements, row-major)
+  /** End releases: [ix, iy, iz, jx, jy, jz] mapped to local DOF [3,4,5,9,10,11] */
+  releases: [EndRelease, EndRelease, EndRelease, EndRelease, EndRelease, EndRelease];
 }
 
 export interface IndexedModel {
@@ -121,19 +197,26 @@ export interface IndexedModel {
   nodalLoads: NodalLoad[];
   memberLoads: MemberLoad[];
   nodeCount: number;
-  dofCount: number; // nodeCount * 3
+  dofCount: number; // nodeCount * 6
   nodeIdToIndex: Map<NodeId, number>;
   memberIdToIndex: Map<MemberId, number>;
+  /** DOF mapping for coupling: dofMap[i] = effective DOF index (master).
+   *  If dofMap[i] === i, the DOF is independent (or is the master). */
+  dofMap: Int32Array;
 }
 
 // ── Analysis output ──
 export interface DiagramPoint {
-  x: number; // local x position along member
-  N: number; // axial force
-  V: number; // shear force
-  M: number; // bending moment
+  x: number;  // local x position along member
+  N: number;  // axial force
+  Vy: number; // shear force Y
+  Vz: number; // shear force Z
+  Mx: number; // torsion
+  My: number; // bending moment about Y
+  Mz: number; // bending moment about Z
   ux: number; // displacement in local x
   uy: number; // displacement in local y
+  uz: number; // displacement in local z
 }
 
 export interface DiagramSeries {
