@@ -157,6 +157,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           members: s.model.members.filter((m) => m.ni !== id && m.nj !== id),
           nodalLoads: s.model.nodalLoads.filter((l) => l.nodeId !== id),
           memberLoads: s.model.memberLoads.filter((l) => !removedMemberIds.has(l.memberId)),
+          couplings: s.model.couplings.filter((c) => c.masterNodeId !== id && c.slaveNodeId !== id),
         },
         isResultStale: true,
       };

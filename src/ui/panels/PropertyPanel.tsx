@@ -30,8 +30,12 @@ export const PropertyPanel: React.FC = () => {
   const setDiagramScale = useViewStore((s) => s.setDiagramScale);
   const showNodeLabels = useViewStore((s) => s.showNodeLabels);
   const showMemberLabels = useViewStore((s) => s.showMemberLabels);
+  const showLoads = useViewStore((s) => s.showLoads);
+  const showSupports = useViewStore((s) => s.showSupports);
   const setShowNodeLabels = useViewStore((s) => s.setShowNodeLabels);
   const setShowMemberLabels = useViewStore((s) => s.setShowMemberLabels);
+  const setShowLoads = useViewStore((s) => s.setShowLoads);
+  const setShowSupports = useViewStore((s) => s.setShowSupports);
 
   const t = useT();
 
@@ -83,6 +87,14 @@ export const PropertyPanel: React.FC = () => {
             <label className="checkbox-label">
               <input type="checkbox" checked={showMemberLabels} onChange={(e) => setShowMemberLabels(e.target.checked)} />
               {t('prop.memberLabels')}
+            </label>
+            <label className="checkbox-label">
+              <input type="checkbox" checked={showLoads} onChange={(e) => setShowLoads(e.target.checked)} />
+              {t('prop.showLoads')}
+            </label>
+            <label className="checkbox-label">
+              <input type="checkbox" checked={showSupports} onChange={(e) => setShowSupports(e.target.checked)} />
+              {t('prop.supports')}
             </label>
           </div>
           <div className="prop-group">
@@ -207,6 +219,8 @@ const MemberProperties: React.FC<{
               <div className="prop-row"><label>jQz</label><input type="number" value={load.jQz} step="1" onChange={(e) => onUpdateLoad(load.id, { jQz: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
               <div className="prop-row"><label>jMy</label><input type="number" value={load.jMy} step="1" onChange={(e) => onUpdateLoad(load.id, { jMy: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
               <div className="prop-row"><label>jMz</label><input type="number" value={load.jMz} step="1" onChange={(e) => onUpdateLoad(load.id, { jMz: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
+              <div className="prop-row"><label>moy</label><input type="number" value={load.moy} step="1" onChange={(e) => onUpdateLoad(load.id, { moy: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
+              <div className="prop-row"><label>moz</label><input type="number" value={load.moz} step="1" onChange={(e) => onUpdateLoad(load.id, { moz: Number(e.target.value) } as Partial<DistributiveOmit<MemberLoad, 'id'>>)} /></div>
             </>
           ) : (
             <>

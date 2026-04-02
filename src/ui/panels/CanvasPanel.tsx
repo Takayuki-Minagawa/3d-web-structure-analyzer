@@ -28,6 +28,8 @@ export const CanvasPanel: React.FC = () => {
   const theme = useViewStore((s) => s.theme);
   const showNodeLabels = useViewStore((s) => s.showNodeLabels);
   const showMemberLabels = useViewStore((s) => s.showMemberLabels);
+  const showLoads = useViewStore((s) => s.showLoads);
+  const showSupports = useViewStore((s) => s.showSupports);
   const deformationScale = useViewStore((s) => s.deformationScale);
   const diagramScale = useViewStore((s) => s.diagramScale);
 
@@ -166,6 +168,14 @@ export const CanvasPanel: React.FC = () => {
   useEffect(() => {
     appRef.current?.setShowMemberLabels(showMemberLabels);
   }, [showMemberLabels]);
+
+  useEffect(() => {
+    appRef.current?.setShowLoads(showLoads);
+  }, [showLoads]);
+
+  useEffect(() => {
+    appRef.current?.setShowSupports(showSupports);
+  }, [showSupports]);
 
   return (
     <div

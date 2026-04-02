@@ -68,6 +68,7 @@ export class ThreeApp {
   private memberGroup = new THREE.Group();
   private resultGroup = new THREE.Group();
   private supportGroup = new THREE.Group();
+  private loadGroup = new THREE.Group();
 
   private grid!: THREE.GridHelper;
 
@@ -128,6 +129,7 @@ export class ThreeApp {
     this.scene.add(this.memberGroup);
     this.scene.add(this.resultGroup);
     this.scene.add(this.supportGroup);
+    this.scene.add(this.loadGroup);
 
     this.createGrid();
     this.scene.add(new THREE.AxesHelper(200));
@@ -187,6 +189,7 @@ export class ThreeApp {
     this.rebuildNodes();
     this.rebuildMembers();
     this.rebuildSupports();
+    this.rebuildLoads();
     this.rebuildResults();
   }
 
@@ -212,6 +215,8 @@ export class ThreeApp {
 
   setShowNodeLabels(v: boolean): void { this.showNodeLabels = v; }
   setShowMemberLabels(v: boolean): void { this.showMemberLabels = v; }
+  setShowLoads(v: boolean): void { this.loadGroup.visible = v; }
+  setShowSupports(v: boolean): void { this.supportGroup.visible = v; }
 
   setEditTool(tool: EditTool): void {
     this.editTool = tool;
@@ -330,6 +335,77 @@ export class ThreeApp {
         opacity: SUPPORT_OPACITY,
       });
       this.supportGroup.add(new THREE.Mesh(triGeo, triMat));
+    }
+  }
+
+  private rebuildLoads(): void {
+    this.clearGroup(this.loadGroup);
+    if (!this.model) return;
+
+    const LOAD_COLOR = 0xff4444;
+    const ARROW_LEN = 15;
+    const HEAD_LEN = 4;
+    const HEAD_WIDTH = 2;
+
+    const nodeMap = new Map(this.model.nodes.map(n => [n.id, n]));
+
+    // Nodal loads: draw arrows at node position
+    for (const nl of this.model.nodalLoads) {
+      const node = nodeMap.get(nl.nodeId);
+      if (!node) continue;
+
+      const forces = [
+        { v: nl.fx, dir: new THREE.Vector3(1, 0, 0) },
+        { v: nl.fy, dir: new THREE.Vector3(0, 1, 0) },
+        { v: nl.fz, dir: new THREE.Vector3(0, 0, 1) },
+      ];
+      const origin = new THREE.Vector3(node.x, node.y, node.z);
+
+      for (const { v, dir } of forces) {
+        if (Math.abs(v) < 1e-10) continue;
+        const sign = v > 0 ? 1 : -1;
+        const arrowDir = dir.clone().multiplyScalar(sign);
+        const start = origin.clone().add(arrowDir.clone().multiplyScalar(-ARROW_LEN));
+        const arrow = new THREE.ArrowHelper(arrowDir, start, ARROW_LEN, LOAD_COLOR, HEAD_LEN, HEAD_WIDTH);
+        this.loadGroup.add(arrow);
+      }
+    }
+
+    // Member UDL loads: draw small arrows along member
+    for (const ml of this.model.memberLoads) {
+      if (ml.type !== 'udl') continue;
+      const member = this.model.members.find(m => m.id === ml.memberId);
+      if (!member) continue;
+      const ni = nodeMap.get(member.ni);
+      const nj = nodeMap.get(member.nj);
+      if (!ni || !nj) continue;
+
+      const start = new THREE.Vector3(ni.x, ni.y, ni.z);
+      const end = new THREE.Vector3(nj.x, nj.y, nj.z);
+
+      // Determine load direction in world space (approximate: use Z for localY, Y for localZ)
+      let loadDir: THREE.Vector3;
+      if (ml.direction === 'localY') {
+        const memberDir = end.clone().sub(start).normalize();
+        const up = new THREE.Vector3(0, 0, 1);
+        loadDir = new THREE.Vector3().crossVectors(memberDir, up).normalize();
+        if (loadDir.lengthSq() < 0.01) loadDir.set(0, 1, 0);
+      } else if (ml.direction === 'localZ') {
+        loadDir = new THREE.Vector3(0, 0, 1);
+      } else {
+        continue; // localX UDL not visualized with arrows
+      }
+
+      const sign = ml.value > 0 ? 1 : -1;
+      const arrDir = loadDir.clone().multiplyScalar(sign);
+      const NSEG = 5;
+      for (let i = 0; i <= NSEG; i++) {
+        const t = i / NSEG;
+        const pos = start.clone().lerp(end.clone(), t);
+        const aStart = pos.clone().add(arrDir.clone().multiplyScalar(-ARROW_LEN * 0.6));
+        const arrow = new THREE.ArrowHelper(arrDir, aStart, ARROW_LEN * 0.6, LOAD_COLOR, HEAD_LEN * 0.6, HEAD_WIDTH * 0.6);
+        this.loadGroup.add(arrow);
+      }
     }
   }
 
@@ -740,6 +816,7 @@ export class ThreeApp {
     this.clearGroup(this.memberGroup);
     this.clearGroup(this.resultGroup);
     this.clearGroup(this.supportGroup);
+    this.clearGroup(this.loadGroup);
     this.controls.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
