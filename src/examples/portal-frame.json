@@ -9,10 +9,10 @@
       { "id": "n3", "x": 6, "y": 0, "restraint": { "ux": true, "uy": true, "rz": false } }
     ],
     "materials": [
-      { "id": "mat1", "name": "Steel", "E": 205000 }
+      { "id": "mat1", "name": "Steel", "E": 205000, "nu": 0.3 }
     ],
     "sections": [
-      { "id": "sec1", "name": "H-200x100", "A": 0.0027, "I": 1.84e-5 }
+      { "id": "sec1", "name": "H-200x100", "A": 0.0027, "I": 1.84e-5, "As": 0.001 }
     ],
     "members": [
       { "id": "m1", "ni": "n0", "nj": "n1", "materialId": "mat1", "sectionId": "sec1" },

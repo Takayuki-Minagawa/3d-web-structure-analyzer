@@ -6,18 +6,22 @@ import type {
   UniformMemberLoad,
 } from '../model/types';
 import { transformVectorToGlobal, buildTransformationMatrix } from './transforms';
+import { computePhi } from './element2dFrame';
 
 /**
- * Hermite shape functions for bending at xi = x/L
+ * Timoshenko shape functions for bending at xi = x/L
+ * Includes shear deformation parameter Φ.
+ * When Φ = 0, reduces to standard Hermite shape functions.
  */
-function hermiteShapeFunctions(xi: number, L: number): [number, number, number, number] {
+function timoshenkoShapeFunctions(xi: number, L: number, phi: number): [number, number, number, number] {
   const xi2 = xi * xi;
   const xi3 = xi2 * xi;
+  const d = 1 + phi;
   return [
-    1 - 3 * xi2 + 2 * xi3,
-    L * (xi - 2 * xi2 + xi3),
-    3 * xi2 - 2 * xi3,
-    L * (-xi2 + xi3),
+    (1 - 3 * xi2 + 2 * xi3 + phi * (1 - xi)) / d,
+    L * (xi - 2 * xi2 + xi3 + (phi / 2) * (xi - xi2)) / d,
+    (3 * xi2 - 2 * xi3 + phi * xi) / d,
+    L * (-xi2 + xi3 + (phi / 2) * (xi2 - xi)) / d,
   ];
 }
 
@@ -34,14 +38,15 @@ export function computePointLoadFixedEndForces(
   const { L } = member;
   const { a, value, direction } = load;
   const xi = a / L;
+  const phi = computePhi(member);
 
   if (direction === 'localX') {
     // Axial point load: use linear shape functions
     f[0] = value * (1 - xi); // i-end axial
     f[3] = value * xi;       // j-end axial
   } else {
-    // Transverse point load: use Hermite shape functions
-    const [N1, N2, N3, N4] = hermiteShapeFunctions(xi, L);
+    // Transverse point load: use Timoshenko shape functions
+    const [N1, N2, N3, N4] = timoshenkoShapeFunctions(xi, L, phi);
     f[1] = value * N1;  // Fyi
     f[2] = value * N2;  // Mzi
     f[4] = value * N3;  // Fyj

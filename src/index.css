@@ -19,7 +19,16 @@
   --border: #313244;
   --surface: #1e1e2e;
   --modal-backdrop: rgba(0, 0, 0, 0.6);
+  --canvas-bg: #1e1e2e;
+  --canvas-grid: #313244;
+  --canvas-text: #cdd6f4;
+  --canvas-member: #89b4fa;
+  --canvas-member-selected: #f9e2af;
+  --canvas-node: #a6e3a1;
+  --canvas-node-selected: #f38ba8;
   --canvas-support: #fab387;
+  --canvas-load: #f38ba8;
+  --canvas-deformed: #f9e2af;
   --canvas-moment: #cba6f7;
 }
 
@@ -37,7 +46,16 @@
   --border: #bcc0cc;
   --surface: #eff1f5;
   --modal-backdrop: rgba(0, 0, 0, 0.35);
+  --canvas-bg: #ffffff;
+  --canvas-grid: #e0e0e0;
+  --canvas-text: #333333;
+  --canvas-member: #1e66f5;
+  --canvas-member-selected: #df8e1d;
+  --canvas-node: #40a02b;
+  --canvas-node-selected: #d20f39;
   --canvas-support: #df8e1d;
+  --canvas-load: #d20f39;
+  --canvas-deformed: #df8e1d;
   --canvas-moment: #8839ef;
 }
 

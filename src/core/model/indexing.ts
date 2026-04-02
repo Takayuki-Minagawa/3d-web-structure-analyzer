@@ -52,6 +52,10 @@ export function buildIndexedModel(model: ProjectModel): IndexedModel {
       );
     }
 
+    const nu = material.nu ?? 0.3;
+    const G = material.E / (2 * (1 + nu));
+    const As = section.As ?? section.A;
+
     return {
       index: i,
       id: m.id,
@@ -63,6 +67,8 @@ export function buildIndexedModel(model: ProjectModel): IndexedModel {
       L,
       cos: L > 0 ? dx / L : 1,
       sin: L > 0 ? dy / L : 0,
+      G,
+      As,
     };
   });
 

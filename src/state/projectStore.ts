@@ -23,10 +23,10 @@ function createDefaultModel(): ProjectModel {
   return {
     nodes: [],
     materials: [
-      { id: generateId(), name: 'Steel', E: 205000 },
+      { id: generateId(), name: 'Steel', E: 205000, nu: 0.3 },
     ],
     sections: [
-      { id: generateId(), name: 'Default', A: 0.01, I: 1e-4 },
+      { id: generateId(), name: 'Default', A: 0.01, I: 1e-4, As: 0.005 },
     ],
     members: [],
     nodalLoads: [],

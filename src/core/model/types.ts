@@ -20,6 +20,7 @@ export interface Material {
   id: MaterialId;
   name: string;
   E: number; // Young's modulus
+  nu: number; // Poisson's ratio
 }
 
 export interface Section {
@@ -27,6 +28,7 @@ export interface Section {
   name: string;
   A: number; // Cross-sectional area
   I: number; // Second moment of area
+  As: number; // Shear area
 }
 
 export interface Member {
@@ -109,6 +111,8 @@ export interface IndexedMember {
   L: number; // length
   cos: number; // direction cosine
   sin: number; // direction sine
+  G: number; // shear modulus
+  As: number; // shear area
 }
 
 export interface IndexedModel {

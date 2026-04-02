@@ -7,20 +7,23 @@ import type {
 } from '../model/types';
 import { buildTransformationMatrix, transformVectorToLocal } from './transforms';
 import { getMemberDofs } from './assembly';
+import { computePhi } from './element2dFrame';
 
 const NUM_SAMPLE_POINTS = 51;
 
 /**
- * Hermite shape functions at xi = x/L
+ * Timoshenko shape functions at xi = x/L with shear parameter Φ.
+ * When Φ = 0, reduces to Hermite shape functions.
  */
-function hermite(xi: number, L: number): [number, number, number, number] {
+function timoshenkoShape(xi: number, L: number, phi: number): [number, number, number, number] {
   const xi2 = xi * xi;
   const xi3 = xi2 * xi;
+  const d = 1 + phi;
   return [
-    1 - 3 * xi2 + 2 * xi3,
-    L * (xi - 2 * xi2 + xi3),
-    3 * xi2 - 2 * xi3,
-    L * (-xi2 + xi3),
+    (1 - 3 * xi2 + 2 * xi3 + phi * (1 - xi)) / d,
+    L * (xi - 2 * xi2 + xi3 + (phi / 2) * (xi - xi2)) / d,
+    (3 * xi2 - 2 * xi3 + phi * xi) / d,
+    L * (-xi2 + xi3 + (phi / 2) * (xi2 - xi)) / d,
   ];
 }
 
@@ -55,6 +58,7 @@ export function generateDiagram(
   globalDisplacements: Float64Array
 ): DiagramSeries {
   const { L, id } = member;
+  const phi = computePhi(member);
 
   // End forces in local coordinates: [Nxi, Vyi, Mzi, Nxj, Vyj, Mzj]
   const Nxi = endForces[0]!;
@@ -154,14 +158,14 @@ export function generateDiagram(
       }
     }
 
-    // Displacements: interpolate using shape functions
+    // Displacements: interpolate using Timoshenko shape functions
     const xi = L > 0 ? x / L : 0;
 
     // Axial displacement: linear interpolation
     const ux = dLocal[0]! * (1 - xi) + dLocal[3]! * xi;
 
-    // Transverse displacement: Hermite interpolation
-    const [h1, h2, h3, h4] = hermite(xi, L);
+    // Transverse displacement: Timoshenko interpolation (includes shear effect)
+    const [h1, h2, h3, h4] = timoshenkoShape(xi, L, phi);
     const uy =
       dLocal[1]! * h1 +
       dLocal[2]! * h2 +

@@ -27,6 +27,29 @@ export interface RenderOptions {
 const NODE_RADIUS = 5;
 const HIT_RADIUS = 10;
 
+/**
+ * Color palette for indexing nodes, members, and sections.
+ * Chosen to be distinct and visible on both dark and light backgrounds.
+ */
+const COLOR_PALETTE = [
+  '#e74c3c', // red
+  '#2196f3', // blue
+  '#2ecc71', // green
+  '#ff9800', // orange
+  '#9b59b6', // purple
+  '#00bcd4', // cyan
+  '#e91e63', // pink
+  '#795548', // brown
+  '#607d8b', // blue-gray
+  '#cddc39', // lime
+  '#ff5722', // deep orange
+  '#3f51b5', // indigo
+];
+
+function paletteColor(index: number): string {
+  return COLOR_PALETTE[index % COLOR_PALETTE.length]!;
+}
+
 interface CanvasColors {
   background: string;
   grid: string;
@@ -49,29 +72,21 @@ function readThemeColors(): CanvasColors {
   const style = getComputedStyle(document.documentElement);
   const get = (name: string) => style.getPropertyValue(name).trim();
 
-  const bg = get('--bg') || '#1e1e2e';
-  const accent = get('--accent') || '#89b4fa';
-  const text = get('--text') || '#cdd6f4';
-  const danger = get('--danger') || '#f38ba8';
-  const warning = get('--warning') || '#f9e2af';
-  const success = get('--success') || '#a6e3a1';
-  const border = get('--border') || '#313244';
-
   return {
-    background: bg,
-    grid: border,
-    member: accent,
-    memberSelected: warning,
-    node: success,
-    nodeSelected: danger,
+    background: get('--canvas-bg') || '#1e1e2e',
+    grid: get('--canvas-grid') || '#313244',
+    member: get('--canvas-member') || '#89b4fa',
+    memberSelected: get('--canvas-member-selected') || '#f9e2af',
+    node: get('--canvas-node') || '#a6e3a1',
+    nodeSelected: get('--canvas-node-selected') || '#f38ba8',
     support: get('--canvas-support') || '#fab387',
-    load: danger,
-    deformed: warning,
-    axialPositive: danger,
-    axialNegative: accent,
-    shear: success,
+    load: get('--canvas-load') || '#f38ba8',
+    deformed: get('--canvas-deformed') || '#f9e2af',
+    axialPositive: get('--danger') || '#f38ba8',
+    axialNegative: get('--accent') || '#89b4fa',
+    shear: get('--success') || '#a6e3a1',
     moment: get('--canvas-moment') || '#cba6f7',
-    text,
+    text: get('--canvas-text') || '#cdd6f4',
     diagramFill: 'rgba(128, 128, 128, 0.15)',
   };
 }
@@ -131,9 +146,14 @@ export class CanvasRenderer {
     // Grid
     this.drawGrid(w, h);
 
-    // Members
+    // Members (color by section)
+    const sectionIds = [...new Set(model.members.map((m) => m.sectionId))];
+    const sectionColorMap = new Map<string, string>();
+    sectionIds.forEach((sid, i) => sectionColorMap.set(sid, paletteColor(i)));
+
     for (const member of model.members) {
-      this.drawMember(model, member, options);
+      const sectionColor = sectionColorMap.get(member.sectionId) || this.colors.member;
+      this.drawMember(model, member, options, sectionColor);
     }
 
     // Supports
@@ -163,8 +183,8 @@ export class CanvasRenderer {
     }
 
     // Nodes (drawn last so they are on top)
-    for (const node of model.nodes) {
-      this.drawNode(node, options);
+    for (let i = 0; i < model.nodes.length; i++) {
+      this.drawNode(model.nodes[i]!, options, i);
     }
 
     // Labels
@@ -172,8 +192,8 @@ export class CanvasRenderer {
       for (let i = 0; i < model.nodes.length; i++) {
         const node = model.nodes[i]!;
         const [sx, sy] = this.modelToScreen(node.x, node.y);
-        ctx.fillStyle = this.colors.text;
-        ctx.font = '11px monospace';
+        ctx.fillStyle = paletteColor(i);
+        ctx.font = 'bold 11px monospace';
         ctx.fillText(`N${i}`, sx + 8, sy - 8);
       }
     }
@@ -187,8 +207,9 @@ export class CanvasRenderer {
             (ni.x + nj.x) / 2,
             (ni.y + nj.y) / 2
           );
-          ctx.fillStyle = this.colors.text;
-          ctx.font = '11px monospace';
+          const secColor = sectionColorMap.get(m.sectionId) || this.colors.member;
+          ctx.fillStyle = secColor;
+          ctx.font = 'bold 11px monospace';
           ctx.fillText(`M${i}`, sx + 5, sy - 5);
         }
       }
@@ -231,21 +252,26 @@ export class CanvasRenderer {
     return mag;
   }
 
-  private drawNode(node: StructuralNode, options: RenderOptions) {
+  private drawNode(node: StructuralNode, options: RenderOptions, nodeIndex: number) {
     const ctx = this.ctx;
     const [sx, sy] = this.modelToScreen(node.x, node.y);
     const selected = options.selectedNodeIds.has(node.id);
 
     ctx.beginPath();
     ctx.arc(sx, sy, NODE_RADIUS, 0, Math.PI * 2);
-    ctx.fillStyle = selected ? this.colors.nodeSelected : this.colors.node;
+    ctx.fillStyle = selected ? this.colors.nodeSelected : paletteColor(nodeIndex);
     ctx.fill();
+    // Outline for better visibility on any background
+    ctx.strokeStyle = this.colors.text;
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
   }
 
   private drawMember(
     model: ProjectModel,
     member: Member,
-    options: RenderOptions
+    options: RenderOptions,
+    sectionColor: string
   ) {
     const ctx = this.ctx;
     const ni = model.nodes.find((n) => n.id === member.ni);
@@ -259,7 +285,7 @@ export class CanvasRenderer {
     ctx.beginPath();
     ctx.moveTo(x1, y1);
     ctx.lineTo(x2, y2);
-    ctx.strokeStyle = selected ? this.colors.memberSelected : this.colors.member;
+    ctx.strokeStyle = selected ? this.colors.memberSelected : sectionColor;
     ctx.lineWidth = selected ? 3 : 2;
     ctx.stroke();
   }
@@ -337,13 +363,14 @@ export class CanvasRenderer {
     ctx.lineWidth = 2;
 
     if (Math.abs(fx) > 1e-10) {
-      const dir = fx > 0 ? 1 : -1;
-      const ex = sx + dir * arrowLen;
+      // dir: tail is opposite to force direction; arrowhead at node points in force direction
+      const dir = fx > 0 ? -1 : 1;
+      const ex = sx + dir * arrowLen; // tail position
       ctx.beginPath();
       ctx.moveTo(ex, sy);
       ctx.lineTo(sx, sy);
       ctx.stroke();
-      // Arrowhead pointing toward node
+      // Arrowhead pointing in force direction
       ctx.beginPath();
       ctx.moveTo(sx, sy);
       ctx.lineTo(sx + dir * arrowHead, sy - arrowHead / 2);
@@ -355,12 +382,14 @@ export class CanvasRenderer {
     }
 
     if (Math.abs(fy) > 1e-10) {
-      const dir = fy > 0 ? -1 : 1; // screen Y is flipped
-      const ey = sy + dir * arrowLen;
+      // screen Y is flipped: model fy>0 (up) needs tail below on screen (dir=1)
+      const dir = fy > 0 ? 1 : -1;
+      const ey = sy + dir * arrowLen; // tail position
       ctx.beginPath();
       ctx.moveTo(sx, ey);
       ctx.lineTo(sx, sy);
       ctx.stroke();
+      // Arrowhead pointing in force direction
       ctx.beginPath();
       ctx.moveTo(sx, sy);
       ctx.lineTo(sx - arrowHead / 2, sy + dir * arrowHead);
@@ -374,10 +403,27 @@ export class CanvasRenderer {
     if (Math.abs(mz) > 1e-10) {
       const r = 15;
       ctx.beginPath();
+      // mz>0 = CCW in model (Y-up) = CW visually on screen (Y-down)
       const startAngle = mz > 0 ? 0 : Math.PI;
       const endAngle = mz > 0 ? Math.PI * 1.5 : Math.PI * 0.5;
       ctx.arc(sx, sy, r, startAngle, endAngle, mz < 0);
       ctx.stroke();
+      // Arrowhead at the end of the arc
+      const endX = sx + r * Math.cos(endAngle);
+      const endY = sy + r * Math.sin(endAngle);
+      // Tangent direction at arc end (CW: -sin, cos; CCW: sin, -cos)
+      const cw = mz > 0; // visually CW on screen for positive mz
+      const tx = cw ? -Math.sin(endAngle) : Math.sin(endAngle);
+      const ty = cw ? Math.cos(endAngle) : -Math.cos(endAngle);
+      const px = -ty;
+      const py = tx;
+      const aSize = 5;
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - tx * aSize + px * aSize * 0.5, endY - ty * aSize + py * aSize * 0.5);
+      ctx.lineTo(endX - tx * aSize - px * aSize * 0.5, endY - ty * aSize - py * aSize * 0.5);
+      ctx.closePath();
+      ctx.fill();
       ctx.font = '10px monospace';
       ctx.fillText(`${Math.abs(mz).toFixed(1)}`, sx + r + 4, sy - r);
     }
@@ -574,9 +620,9 @@ export class CanvasRenderer {
 
       const cos = dx / L;
       const sin = dy / L;
-      // Perpendicular direction (local Y in global)
-      const px = -sin;
-      const py = cos;
+      // Perpendicular direction: -localY so positive values plot on tension side
+      const px = sin;
+      const py = -cos;
 
       const fillColor = this.colors.diagramFill;
 

@@ -7,8 +7,8 @@ import type { ProjectModel } from '../../core/model/types';
 function createBaseModel(): ProjectModel {
   return {
     nodes: [],
-    materials: [{ id: 'mat1', name: 'Steel', E: 200e6 }],
-    sections: [{ id: 'sec1', name: '10x10', A: 0.01, I: 8.333e-6 }],
+    materials: [{ id: 'mat1', name: 'Steel', E: 200e6, nu: 0.3 }],
+    sections: [{ id: 'sec1', name: '10x10', A: 0.01, I: 8.333e-6, As: 0.005 }],
     members: [],
     nodalLoads: [],
     memberLoads: [],
@@ -24,6 +24,9 @@ describe('Case 1: Cantilever beam with tip point load', () => {
   const L = 4;
   const E = 200e6;
   const I = 8.333e-6;
+  const nu = 0.3;
+  const G = E / (2 * (1 + nu));
+  const As = 0.005;
 
   function buildModel(): ProjectModel {
     const model = createBaseModel();
@@ -45,8 +48,8 @@ describe('Case 1: Cantilever beam with tip point load', () => {
     const indexed = buildIndexedModel(model);
     const result = analyzeFrame({ model: indexed });
 
-    // Theoretical: delta = PL³ / 3EI
-    const delta = (P * L * L * L) / (3 * E * I);
+    // Theoretical (Timoshenko): delta = PL³/(3EI) + PL/(G·As)
+    const delta = (P * L * L * L) / (3 * E * I) + (P * L) / (G * As);
 
     // Node 1 uy is at DOF index 4 (node1 * 3 + 1)
     expect(result.displacements[4]).toBeCloseTo(delta, 4);
@@ -109,6 +112,9 @@ describe('Case 2: Cantilever beam with uniform distributed load', () => {
   const L = 4;
   const E = 200e6;
   const I = 8.333e-6;
+  const nu = 0.3;
+  const G = E / (2 * (1 + nu));
+  const As = 0.005;
 
   function buildModel(): ProjectModel {
     const model = createBaseModel();
@@ -130,8 +136,8 @@ describe('Case 2: Cantilever beam with uniform distributed load', () => {
     const indexed = buildIndexedModel(model);
     const result = analyzeFrame({ model: indexed });
 
-    // Theoretical: delta = wL⁴ / 8EI
-    const delta = (w * L * L * L * L) / (8 * E * I);
+    // Theoretical (Timoshenko): delta = wL⁴/(8EI) + wL²/(2G·As)
+    const delta = (w * L * L * L * L) / (8 * E * I) + (w * L * L) / (2 * G * As);
 
     expect(result.displacements[4]).toBeCloseTo(delta, 4);
   });

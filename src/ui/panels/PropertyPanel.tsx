@@ -402,6 +402,17 @@ const MaterialsEditor: React.FC = () => {
               onChange={(e) => updateMaterial(mat.id, { E: Number(e.target.value) })}
             />
           </div>
+          <div className="prop-row">
+            <label>{t('prop.matNu')}</label>
+            <input
+              type="number"
+              value={mat.nu ?? 0.3}
+              step="0.01"
+              min="0"
+              max="0.5"
+              onChange={(e) => updateMaterial(mat.id, { nu: Number(e.target.value) })}
+            />
+          </div>
           {!inUseIds.has(mat.id) && (
             <button className="danger small" onClick={() => removeMaterial(mat.id)}>
               {t('prop.removeMaterial')}
@@ -410,7 +421,7 @@ const MaterialsEditor: React.FC = () => {
         </div>
       ))}
       <div className="prop-actions">
-        <button onClick={() => addMaterial({ name: 'New', E: 205000 })}>
+        <button onClick={() => addMaterial({ name: 'New', E: 205000, nu: 0.3 })}>
           {t('prop.addMaterial')}
         </button>
       </div>
@@ -458,6 +469,15 @@ const SectionsEditor: React.FC = () => {
               onChange={(e) => updateSection(sec.id, { I: Number(e.target.value) })}
             />
           </div>
+          <div className="prop-row">
+            <label>{t('prop.secAs')}</label>
+            <input
+              type="number"
+              value={sec.As ?? sec.A}
+              step="0.001"
+              onChange={(e) => updateSection(sec.id, { As: Number(e.target.value) })}
+            />
+          </div>
           {!inUseIds.has(sec.id) && (
             <button className="danger small" onClick={() => removeSection(sec.id)}>
               {t('prop.removeSection')}
@@ -466,7 +486,7 @@ const SectionsEditor: React.FC = () => {
         </div>
       ))}
       <div className="prop-actions">
-        <button onClick={() => addSection({ name: 'New', A: 0.01, I: 1e-4 })}>
+        <button onClick={() => addSection({ name: 'New', A: 0.01, I: 1e-4, As: 0.005 })}>
           {t('prop.addSection')}
         </button>
       </div>
