@@ -46,6 +46,7 @@ npm test
 - 部材コード角の設定
 - 節点荷重（Fx, Fy, Fz, Mx, My, Mz）
 - 部材荷重（集中荷重・等分布荷重・CMQ荷重）
+- 荷重ケースと荷重組合せ（ケース別荷重、係数付き組合せ解析）
 
 ### インポート / エクスポート
 - FrameModelMaker-Web 形式（FrameJsonDocument）のインポート

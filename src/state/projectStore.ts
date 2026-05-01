@@ -12,6 +12,8 @@ import type {
   AnalysisError,
   Restraint,
   AnalysisMode,
+  LoadCase,
+  LoadCombination,
 } from '../core/model/types';
 import type { WorkerResponse } from '../worker/protocol';
 import { parseFrameJsonText, isFrameJsonFormat } from '../io/frameJsonParser';
@@ -27,6 +29,12 @@ import {
   DEFAULT_TORSION_RESTRAINT,
   normalizeTorsionRestraint,
 } from '../core/model/torsionRestraint';
+import {
+  DEFAULT_LOAD_CASE,
+  getActiveLoadCaseId,
+  getLoadCases,
+  getLoadCombinations,
+} from '../core/model/loadCases';
 
 /** Distributive Omit that works correctly with union types */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
@@ -45,11 +53,30 @@ export type AnalysisModeUpdateResult =
   | { ok: false; error: string; nodeIds: string[] };
 
 function normalizeProjectModel(model: ProjectModel): ProjectModel {
+  const loadCases = getLoadCases(model);
+  const loadCaseIds = new Set(loadCases.map((loadCase) => loadCase.id));
+  const fallbackLoadCaseId = loadCases[0]!.id;
+  const activeLoadCaseId = model.activeLoadCaseId && loadCaseIds.has(model.activeLoadCaseId)
+    ? model.activeLoadCaseId
+    : fallbackLoadCaseId;
+  const loadCombinations = getLoadCombinations(model).map((combo) => ({
+    ...combo,
+    factors: combo.factors.filter((factor) => loadCaseIds.has(factor.loadCaseId)),
+  }));
+  const activeLoadCombinationId = model.activeLoadCombinationId &&
+    loadCombinations.some((combo) => combo.id === model.activeLoadCombinationId)
+    ? model.activeLoadCombinationId
+    : null;
+
   // Idempotently fills defaults for older persisted/imported project files.
   return {
     ...model,
     analysisMode: model.analysisMode ?? DEFAULT_ANALYSIS_MODE,
     springs: model.springs ?? [],
+    loadCases,
+    loadCombinations,
+    activeLoadCaseId,
+    activeLoadCombinationId,
     members: (model.members ?? []).map((member) => ({
       ...member,
       iSprings: member.iSprings ?? { x: 0, y: 0, z: 0 },
@@ -57,8 +84,18 @@ function normalizeProjectModel(model: ProjectModel): ProjectModel {
       torsionRestraint: normalizeTorsionRestraint(member.torsionRestraint),
     })),
     couplings: model.couplings ?? [],
-    nodalLoads: model.nodalLoads ?? [],
-    memberLoads: model.memberLoads ?? [],
+    nodalLoads: (model.nodalLoads ?? []).map((load) => ({
+      ...load,
+      loadCaseId: load.loadCaseId && loadCaseIds.has(load.loadCaseId)
+        ? load.loadCaseId
+        : fallbackLoadCaseId,
+    })),
+    memberLoads: (model.memberLoads ?? []).map((load) => ({
+      ...load,
+      loadCaseId: load.loadCaseId && loadCaseIds.has(load.loadCaseId)
+        ? load.loadCaseId
+        : fallbackLoadCaseId,
+    })),
   };
 }
 
@@ -79,6 +116,10 @@ function createDefaultModel(): ProjectModel {
       { id: generateId(), name: 'Default', materialId: matId, A: 100, Ix: 1000, Iy: 500, Iz: 500, ky: 0, kz: 0 },
     ],
     springs: [],
+    loadCases: [DEFAULT_LOAD_CASE],
+    loadCombinations: [],
+    activeLoadCaseId: DEFAULT_LOAD_CASE.id,
+    activeLoadCombinationId: null,
     members: [],
     couplings: [],
     nodalLoads: [],
@@ -131,6 +172,16 @@ interface ProjectState {
   addMemberLoad: (load: DistributiveOmit<MemberLoad, 'id'>) => string;
   updateMemberLoad: (id: string, updates: Partial<DistributiveOmit<MemberLoad, 'id'>>) => void;
   removeMemberLoad: (id: string) => void;
+
+  // Load cases
+  addLoadCase: (name?: string) => string;
+  updateLoadCase: (id: string, updates: Partial<Omit<LoadCase, 'id'>>) => void;
+  removeLoadCase: (id: string) => void;
+  setActiveLoadCase: (id: string) => void;
+  addLoadCombination: (name?: string) => string;
+  updateLoadCombination: (id: string, updates: Partial<Omit<LoadCombination, 'id'>>) => void;
+  removeLoadCombination: (id: string) => void;
+  setActiveLoadCombination: (id: string | null) => void;
 
   // Coupling operations
   addCoupling: (c: Omit<CouplingConstraint, 'id'>) => string;
@@ -330,7 +381,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set((s) => ({
       model: {
         ...s.model,
-        nodalLoads: [...s.model.nodalLoads, { ...load, id }],
+        nodalLoads: [
+          ...s.model.nodalLoads,
+          { ...load, id, loadCaseId: load.loadCaseId ?? getActiveLoadCaseId(s.model) },
+        ],
       },
       isResultStale: true,
     }));
@@ -364,7 +418,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set((s) => ({
       model: {
         ...s.model,
-        memberLoads: [...s.model.memberLoads, { ...load, id } as MemberLoad],
+        memberLoads: [
+          ...s.model.memberLoads,
+          { ...load, id, loadCaseId: load.loadCaseId ?? getActiveLoadCaseId(s.model) } as MemberLoad,
+        ],
       },
       isResultStale: true,
     }));
@@ -388,6 +445,139 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       model: {
         ...s.model,
         memberLoads: s.model.memberLoads.filter((l) => l.id !== id),
+      },
+      isResultStale: true,
+    }));
+  },
+
+  addLoadCase: (name) => {
+    const id = generateId();
+    set((s) => ({
+      model: {
+        ...s.model,
+        loadCases: [...getLoadCases(s.model), { id, name: name ?? 'New Case' }],
+        activeLoadCaseId: id,
+        activeLoadCombinationId: null,
+      },
+      isResultStale: true,
+    }));
+    return id;
+  },
+
+  updateLoadCase: (id, updates) => {
+    set((s) => ({
+      model: {
+        ...s.model,
+        loadCases: getLoadCases(s.model).map((loadCase) =>
+          loadCase.id === id ? { ...loadCase, ...updates } : loadCase
+        ),
+      },
+      isResultStale: true,
+    }));
+  },
+
+  removeLoadCase: (id) => {
+    set((s) => {
+      const cases = getLoadCases(s.model);
+      if (cases.length <= 1) return {};
+      const remainingCases = cases.filter((loadCase) => loadCase.id !== id);
+      const fallbackId = remainingCases[0]!.id;
+      const combinations = getLoadCombinations(s.model).map((combo) => ({
+        ...combo,
+        factors: combo.factors.filter((factor) => factor.loadCaseId !== id),
+      }));
+      const nextActiveCombinationId = s.model.activeLoadCombinationId &&
+        combinations.some((combo) => combo.id === s.model.activeLoadCombinationId)
+        ? s.model.activeLoadCombinationId
+        : null;
+      const nextActiveLoadCaseId = s.model.activeLoadCaseId &&
+        s.model.activeLoadCaseId !== id
+        ? s.model.activeLoadCaseId
+        : fallbackId;
+
+      return {
+        model: {
+          ...s.model,
+          loadCases: remainingCases,
+          activeLoadCaseId: nextActiveLoadCaseId,
+          activeLoadCombinationId: nextActiveCombinationId,
+          loadCombinations: combinations,
+          nodalLoads: s.model.nodalLoads.map((load) =>
+            load.loadCaseId === id ? { ...load, loadCaseId: fallbackId } : load
+          ),
+          memberLoads: s.model.memberLoads.map((load) =>
+            load.loadCaseId === id ? { ...load, loadCaseId: fallbackId } as MemberLoad : load
+          ),
+        },
+        isResultStale: true,
+      };
+    });
+  },
+
+  setActiveLoadCase: (id) => {
+    set((s) => ({
+      model: {
+        ...s.model,
+        activeLoadCaseId: id,
+        activeLoadCombinationId: null,
+      },
+      isResultStale: true,
+    }));
+  },
+
+  addLoadCombination: (name) => {
+    const id = generateId();
+    set((s) => ({
+      model: {
+        ...s.model,
+        loadCombinations: [
+          ...getLoadCombinations(s.model),
+          {
+            id,
+            name: name ?? 'New Combination',
+            factors: getLoadCases(s.model).map((loadCase) => ({
+              loadCaseId: loadCase.id,
+              factor: loadCase.id === getActiveLoadCaseId(s.model) ? 1 : 0,
+            })),
+          },
+        ],
+        activeLoadCombinationId: id,
+      },
+      isResultStale: true,
+    }));
+    return id;
+  },
+
+  updateLoadCombination: (id, updates) => {
+    set((s) => ({
+      model: {
+        ...s.model,
+        loadCombinations: getLoadCombinations(s.model).map((combo) =>
+          combo.id === id ? { ...combo, ...updates } : combo
+        ),
+      },
+      isResultStale: true,
+    }));
+  },
+
+  removeLoadCombination: (id) => {
+    set((s) => ({
+      model: {
+        ...s.model,
+        loadCombinations: getLoadCombinations(s.model).filter((combo) => combo.id !== id),
+        activeLoadCombinationId: s.model.activeLoadCombinationId === id
+          ? null
+          : s.model.activeLoadCombinationId ?? null,
+      },
+      isResultStale: true,
+    }));
+  },
+
+  setActiveLoadCombination: (id) => {
+    set((s) => ({
+      model: {
+        ...s.model,
+        activeLoadCombinationId: id,
       },
       isResultStale: true,
     }));
