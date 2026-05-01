@@ -88,8 +88,12 @@ const ja = {
   'prop.analysisMode': '解析モード',
   'prop.analysisMode3d': '3Dフレーム',
   'prop.analysisModeXz2d': '2Dフレーム（X-Z）',
+  'prop.analysisModeXy2d': '2Dフレーム（X-Y）',
+  'prop.analysisModeYz2d': '2Dフレーム（Y-Z）',
   'prop.yLockedXz2d': '2D X-ZモードではY座標は0固定です',
+  'prop.coordinateLocked2d': '2Dモードでは面外座標は0固定です',
   'prop.flattenToXz2d': '節点Yを0にして2D化',
+  'prop.flattenTo2dPlane': '面外座標を0にして2D化',
 
   // Property panel - display settings
   'prop.displaySettings': '表示設定',
@@ -292,8 +296,12 @@ const en: Record<keyof typeof ja, string> = {
   'prop.analysisMode': 'Analysis Mode',
   'prop.analysisMode3d': '3D Frame',
   'prop.analysisModeXz2d': '2D Frame (X-Z)',
+  'prop.analysisModeXy2d': '2D Frame (X-Y)',
+  'prop.analysisModeYz2d': '2D Frame (Y-Z)',
   'prop.yLockedXz2d': 'Y is fixed at 0 in 2D X-Z mode',
+  'prop.coordinateLocked2d': 'The out-of-plane coordinate is fixed at 0 in 2D mode',
   'prop.flattenToXz2d': 'Set node Y to 0',
+  'prop.flattenTo2dPlane': 'Set out-of-plane coordinates to 0',
 
   'prop.displaySettings': 'Display Settings',
   'prop.nodeLabels': 'Node Labels',

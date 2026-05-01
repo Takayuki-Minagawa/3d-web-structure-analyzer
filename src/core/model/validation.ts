@@ -1,10 +1,11 @@
 import type { ProjectModel, AnalysisError } from './types';
 import {
-  findNodesOffXzPlane,
-  findMembersWithUnsupportedXz2dOrientation,
+  findMembersWithUnsupported2dOrientation,
+  findNodesOffAnalysisPlane,
   getAnalysisMode,
+  get2dModeConfig,
   getEffectiveRestraint,
-  XZ_2D_MODE,
+  getMemberOutOfPlaneLocalAxes,
 } from './analysisMode';
 import {
   findMembersWithUnsupportedTorsionRestraint,
@@ -20,23 +21,23 @@ function isNonzero(value: number): boolean {
 export function validateModel(model: ProjectModel): AnalysisError[] {
   const errors: AnalysisError[] = [];
   const analysisMode = getAnalysisMode(model);
-  const isXz2d = analysisMode === XZ_2D_MODE;
+  const twoDimensionalConfig = get2dModeConfig(analysisMode);
 
-  if (isXz2d) {
-    const offPlaneNodes = findNodesOffXzPlane(model);
+  if (twoDimensionalConfig) {
+    const offPlaneNodes = findNodesOffAnalysisPlane(model, analysisMode);
     if (offPlaneNodes.length > 0) {
       errors.push({
         type: 'validation',
-        message: `2D X-Z平面モードでは全節点のY座標が0である必要があります。対象節点: ${offPlaneNodes.map((n) => n.id).join(', ')}`,
+        message: `2D ${twoDimensionalConfig.planeLabel}平面モードでは全節点の${twoDimensionalConfig.lockedCoordinateLabel}座標が0である必要があります。対象節点: ${offPlaneNodes.map((n) => n.id).join(', ')}`,
         nodeId: offPlaneNodes[0]!.id,
       });
     }
 
-    const unsupportedMembers = findMembersWithUnsupportedXz2dOrientation(model);
+    const unsupportedMembers = findMembersWithUnsupported2dOrientation(model, analysisMode);
     if (unsupportedMembers.length > 0) {
       errors.push({
         type: 'validation',
-        message: `2D X-Z平面モードでは部材コード角を0度または180度系にしてください。対象部材: ${unsupportedMembers.map((m) => m.id).join(', ')}`,
+        message: `2D ${twoDimensionalConfig.planeLabel}平面モードでは部材コード角を0度または180度系にしてください。対象部材: ${unsupportedMembers.map((m) => m.id).join(', ')}`,
         elementId: unsupportedMembers[0]!.id,
       });
     }
@@ -215,28 +216,38 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
         elementId: ml.id,
       });
     }
-    if (isXz2d) {
+    if (twoDimensionalConfig) {
+      const member = model.members.find((item) => item.id === ml.memberId);
+      const outOfPlaneAxes = member
+        ? getMemberOutOfPlaneLocalAxes(model, member, analysisMode)
+        : { localY: false, localZ: false };
       if ((ml.type === 'point' || ml.type === 'udl') &&
-          ml.direction === 'localY' &&
+          ((ml.direction === 'localY' && outOfPlaneAxes.localY) ||
+           (ml.direction === 'localZ' && outOfPlaneAxes.localZ)) &&
           isNonzero(ml.value)) {
         errors.push({
           type: 'validation',
-          message: `2D X-Z平面モードでは部材荷重 ${ml.id} の localY 方向荷重は使用できません。localX または localZ を使用してください。`,
+          message: `2D ${twoDimensionalConfig.planeLabel}平面モードでは部材荷重 ${ml.id} の面外方向荷重 (${ml.direction}) は使用できません。localX または面内のローカル方向を使用してください。`,
           elementId: ml.id,
         });
       }
       if (ml.type === 'cmq') {
-        const invalid = [
-          ['iQy', ml.iQy],
-          ['jQy', ml.jQy],
-          ['iMz', ml.iMz],
-          ['jMz', ml.jMz],
-          ['moz', ml.moz],
-        ].filter(([, value]) => isNonzero(value as number));
-        if (invalid.length > 0) {
+        const invalid: Array<[string, number]> = [];
+        if (outOfPlaneAxes.localY) {
+          invalid.push(['iQy', ml.iQy], ['jQy', ml.jQy]);
+        } else {
+          invalid.push(['iMy', ml.iMy], ['jMy', ml.jMy], ['moy', ml.moy]);
+        }
+        if (outOfPlaneAxes.localZ) {
+          invalid.push(['iQz', ml.iQz], ['jQz', ml.jQz]);
+        } else {
+          invalid.push(['iMz', ml.iMz], ['jMz', ml.jMz], ['moz', ml.moz]);
+        }
+        const nonzeroInvalid = invalid.filter(([, value]) => isNonzero(value));
+        if (nonzeroInvalid.length > 0) {
           errors.push({
             type: 'validation',
-            message: `2D X-Z平面モードではCMQ荷重 ${ml.id} の面外成分 (${invalid.map(([name]) => name).join(', ')}) は使用できません。`,
+            message: `2D ${twoDimensionalConfig.planeLabel}平面モードではCMQ荷重 ${ml.id} の面外成分 (${nonzeroInvalid.map(([name]) => name).join(', ')}) は使用できません。`,
             elementId: ml.id,
           });
         }
@@ -253,16 +264,14 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
         nodeId: nl.nodeId,
       });
     }
-    if (isXz2d) {
-      const invalid = [
-        ['fy', nl.fy],
-        ['mx', nl.mx],
-        ['mz', nl.mz],
-      ].filter(([, value]) => isNonzero(value as number));
+    if (twoDimensionalConfig) {
+      const invalid = twoDimensionalConfig.invalidNodalLoadComponents
+        .map((name) => [name, nl[name]] as const)
+        .filter(([, value]) => isNonzero(value));
       if (invalid.length > 0) {
         errors.push({
           type: 'validation',
-          message: `2D X-Z平面モードでは節点荷重 ${nl.id} の面外成分 (${invalid.map(([name]) => name).join(', ')}) は使用できません。fx, fz, my を使用してください。`,
+          message: `2D ${twoDimensionalConfig.planeLabel}平面モードでは節点荷重 ${nl.id} の面外成分 (${invalid.map(([name]) => name).join(', ')}) は使用できません。${twoDimensionalConfig.allowedNodalLoadComponents.join(', ')} を使用してください。`,
           nodeId: nl.nodeId,
         });
       }

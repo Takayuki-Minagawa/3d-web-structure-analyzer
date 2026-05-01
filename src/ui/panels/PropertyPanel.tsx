@@ -5,9 +5,12 @@ import { useViewStore } from '../../state/viewStore';
 import { useT } from '../../i18n';
 import type { StructuralNode, Member, NodalLoad, MemberLoad, AnalysisMode, TorsionRestraintEnd } from '../../core/model/types';
 import {
-  findNodesOffXzPlane,
+  findNodesOffAnalysisPlane,
   getAnalysisMode,
-  XZ_2D_MODE,
+  get2dModeConfig,
+  getDefaultMemberLoadDirectionForMode,
+  getMemberOutOfPlaneLocalAxes,
+  TWO_DIMENSIONAL_MODES,
 } from '../../core/model/analysisMode';
 import {
   getActiveLoadCaseId,
@@ -86,7 +89,7 @@ export const PropertyPanel: React.FC = () => {
             addMemberLoad({
               memberId,
               type: 'udl',
-              direction: analysisMode === XZ_2D_MODE ? 'localZ' : 'localY',
+              direction: getDefaultMemberLoadDirectionForMode(model, memberId, analysisMode),
               value: -5,
             })
           }
@@ -154,18 +157,19 @@ const NodeProperties: React.FC<{
     ux: t('prop.dirX'), uy: t('prop.dirY'), uz: t('prop.dirZ'),
     rx: t('prop.rotX'), ry: t('prop.rotY'), rz: t('prop.rotZ'),
   };
+  const twoDimensionalConfig = get2dModeConfig(analysisMode);
 
   return (
     <div className="prop-group">
       <div className="prop-title">{t('prop.node')} {node.id.substring(0, 5)}</div>
       {(['x', 'y', 'z'] as const).map((axis) => {
-        const yLocked = analysisMode === XZ_2D_MODE && axis === 'y';
+        const locked = twoDimensionalConfig?.lockedCoordinate === axis;
         return (
           <div className="prop-row" key={axis}>
             <label>{axis.toUpperCase()}:</label>
             <input type="number" value={node[axis]} step="1"
-              disabled={yLocked}
-              title={yLocked ? t('prop.yLockedXz2d') : undefined}
+              disabled={locked}
+              title={locked ? t('prop.coordinateLocked2d') : undefined}
               onChange={(e) => onUpdate(node.id, { [axis]: Number(e.target.value) })} />
           </div>
         );
@@ -212,18 +216,22 @@ const NodeProperties: React.FC<{
 const AnalysisModeEditor: React.FC = () => {
   const model = useProjectStore((s) => s.model);
   const setAnalysisMode = useProjectStore((s) => s.setAnalysisMode);
-  const flattenNodesToXzPlane = useProjectStore((s) => s.flattenNodesToXzPlane);
+  const flattenNodesTo2dPlane = useProjectStore((s) => s.flattenNodesTo2dPlane);
   const [error, setError] = React.useState<string | null>(null);
   const [offPlaneNodeIds, setOffPlaneNodeIds] = React.useState<string[]>([]);
+  const [blockedMode, setBlockedMode] = React.useState<AnalysisMode | null>(null);
   const t = useT();
   const mode = getAnalysisMode(model);
 
   React.useEffect(() => {
-    if (error && findNodesOffXzPlane(model).length === 0) {
+    if (error && blockedMode && findNodesOffAnalysisPlane(model, blockedMode).length === 0) {
       setError(null);
       setOffPlaneNodeIds([]);
+      setBlockedMode(null);
     }
-  }, [error, model]);
+  }, [blockedMode, error, model]);
+
+  const flattenTargetMode = blockedMode ?? mode;
 
   return (
     <div className="prop-group">
@@ -233,27 +241,38 @@ const AnalysisModeEditor: React.FC = () => {
           aria-label={t('prop.analysisMode')}
           value={mode}
           onChange={(e) => {
-            const result = setAnalysisMode(e.target.value as AnalysisMode);
+            const nextMode = e.target.value as AnalysisMode;
+            const result = setAnalysisMode(nextMode);
             setError(result.ok ? null : result.error);
             setOffPlaneNodeIds(result.ok ? [] : result.nodeIds);
+            setBlockedMode(result.ok ? null : nextMode);
           }}
         >
           <option value="3d">{t('prop.analysisMode3d')}</option>
-          <option value="xz2d">{t('prop.analysisModeXz2d')}</option>
+          {TWO_DIMENSIONAL_MODES.map((config) => (
+            <option key={config.mode} value={config.mode}>
+              {config.mode === 'xz2d'
+                ? t('prop.analysisModeXz2d')
+                : config.mode === 'xy2d'
+                  ? t('prop.analysisModeXy2d')
+                  : t('prop.analysisModeYz2d')}
+            </option>
+          ))}
         </select>
       </div>
       {error && <div className="error-text">{error}</div>}
-      {offPlaneNodeIds.length > 0 && (
+      {offPlaneNodeIds.length > 0 && get2dModeConfig(flattenTargetMode) && (
         <div className="prop-actions">
           <button
             onClick={() => {
-              const converted = flattenNodesToXzPlane();
-              const result = setAnalysisMode(XZ_2D_MODE);
+              flattenNodesTo2dPlane(flattenTargetMode);
+              const result = setAnalysisMode(flattenTargetMode);
               setError(result.ok ? null : result.error);
-              setOffPlaneNodeIds(result.ok ? [] : converted);
+              setOffPlaneNodeIds(result.ok ? [] : result.nodeIds);
+              setBlockedMode(result.ok ? null : flattenTargetMode);
             }}
           >
-            {t('prop.flattenToXz2d')}
+            {t('prop.flattenTo2dPlane')}
           </button>
         </div>
       )}
@@ -278,6 +297,7 @@ const MemberProperties: React.FC<{
   const nj = model.nodes.find((n) => n.id === member.nj);
   const L = ni && nj ? Math.sqrt((nj.x - ni.x) ** 2 + (nj.y - ni.y) ** 2 + (nj.z - ni.z) ** 2) : 0;
   const supportsTwistRestraint = getMemberAxisRotationDofOffset(model, member) !== null;
+  const outOfPlaneLoadAxes = getMemberOutOfPlaneLocalAxes(model, member, analysisMode);
 
   return (
     <div className="prop-group">
@@ -360,8 +380,8 @@ const MemberProperties: React.FC<{
                   <label>{t('prop.loadDirection')}</label>
                   <select value={load.direction}
                     onChange={(e) => onUpdateLoad(load.id, { direction: e.target.value as 'localX' | 'localY' | 'localZ' })}>
-                    <option value="localY" disabled={analysisMode === XZ_2D_MODE}>localY</option>
-                    <option value="localZ">localZ</option>
+                    <option value="localY" disabled={outOfPlaneLoadAxes.localY}>localY</option>
+                    <option value="localZ" disabled={outOfPlaneLoadAxes.localZ}>localZ</option>
                     <option value="localX">localX</option>
                   </select>
                 </div>

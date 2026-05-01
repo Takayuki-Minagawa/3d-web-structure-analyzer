@@ -20,10 +20,12 @@ import { parseFrameJsonText, isFrameJsonFormat } from '../io/frameJsonParser';
 import { convertFrameJson } from '../io/frameJsonConverter';
 import {
   DEFAULT_ANALYSIS_MODE,
-  XZ_2D_MODE,
-  findNodesOffXzPlane,
+  findNodesOffAnalysisPlane,
   getAnalysisMode,
-  isXz2dMode,
+  get2dModeConfig,
+  lockNodeToAnalysisPlane,
+  normalizeAnalysisMode,
+  XZ_2D_MODE,
 } from '../core/model/analysisMode';
 import {
   DEFAULT_TORSION_RESTRAINT,
@@ -71,7 +73,7 @@ function normalizeProjectModel(model: ProjectModel): ProjectModel {
   // Idempotently fills defaults for older persisted/imported project files.
   return {
     ...model,
-    analysisMode: model.analysisMode ?? DEFAULT_ANALYSIS_MODE,
+    analysisMode: normalizeAnalysisMode(model.analysisMode),
     springs: model.springs ?? [],
     loadCases,
     loadCombinations,
@@ -99,8 +101,10 @@ function normalizeProjectModel(model: ProjectModel): ProjectModel {
   };
 }
 
-function formatOffPlaneError(nodeIds: string[]): string {
-  return `2D X-Z平面モードに切り替えるには、すべての節点のY座標を0にしてください。対象節点: ${nodeIds.join(', ')}`;
+function formatOffPlaneError(mode: AnalysisMode, nodeIds: string[]): string {
+  const config = get2dModeConfig(mode);
+  if (!config) return '';
+  return `2D ${config.planeLabel}平面モードに切り替えるには、すべての節点の${config.lockedCoordinateLabel}座標を0にしてください。対象節点: ${nodeIds.join(', ')}`;
 }
 
 function createDefaultModel(): ProjectModel {
@@ -185,6 +189,7 @@ interface ProjectState {
   setAnalysisResult: (resp: WorkerResponse) => void;
   markResultStale: () => void;
   setAnalysisMode: (mode: AnalysisMode) => AnalysisModeUpdateResult;
+  flattenNodesTo2dPlane: (mode?: AnalysisMode) => string[];
   flattenNodesToXzPlane: () => string[];
 
   // Project
@@ -212,7 +217,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ...s.model,
         nodes: [
           ...s.model.nodes,
-          { id, x, y: isXz2dMode(s.model) ? 0 : y, z, restraint: { ...DEFAULT_RESTRAINT } },
+          lockNodeToAnalysisPlane(
+            { id, x, y, z, restraint: { ...DEFAULT_RESTRAINT } },
+            getAnalysisMode(s.model)
+          ),
         ],
       },
       isResultStale: true,
@@ -226,7 +234,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ...s.model,
         nodes: s.model.nodes.map((n) =>
           n.id === id
-            ? { ...n, ...updates, ...(isXz2dMode(s.model) ? { y: 0 } : {}) }
+            ? lockNodeToAnalysisPlane({ ...n, ...updates }, getAnalysisMode(s.model))
             : n
         ),
       },
@@ -642,11 +650,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   markResultStale: () => set({ isResultStale: true }),
 
   setAnalysisMode: (mode) => {
-    if (mode === XZ_2D_MODE) {
-      const offPlaneNodes = findNodesOffXzPlane(get().model);
+    if (get2dModeConfig(mode)) {
+      const offPlaneNodes = findNodesOffAnalysisPlane(get().model, mode);
       if (offPlaneNodes.length > 0) {
         const nodeIds = offPlaneNodes.map((node) => node.id);
-        return { ok: false, error: formatOffPlaneError(nodeIds), nodeIds };
+        return { ok: false, error: formatOffPlaneError(mode, nodeIds), nodeIds };
       }
     }
 
@@ -659,15 +667,20 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     return { ok: true };
   },
 
-  flattenNodesToXzPlane: () => {
-    const offPlaneNodeIds = findNodesOffXzPlane(get().model).map((node) => node.id);
+  flattenNodesTo2dPlane: (mode) => {
+    const targetMode = mode ?? getAnalysisMode(get().model);
+    const config = get2dModeConfig(targetMode);
+    if (!config) return [];
+    const offPlaneNodeIds = findNodesOffAnalysisPlane(get().model, targetMode).map((node) => node.id);
     if (offPlaneNodeIds.length === 0) return [];
 
     set((s) => ({
       model: {
         ...s.model,
         nodes: s.model.nodes.map((node) =>
-          offPlaneNodeIds.includes(node.id) ? { ...node, y: 0 } : node
+          offPlaneNodeIds.includes(node.id)
+            ? { ...node, [config.lockedCoordinate]: 0 }
+            : node
         ),
       },
       isResultStale: true,
@@ -675,6 +688,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     return offPlaneNodeIds;
   },
+
+  flattenNodesToXzPlane: () => get().flattenNodesTo2dPlane(XZ_2D_MODE),
 
   loadModel: (model) => set((s) => ({
     model: normalizeProjectModel(model),

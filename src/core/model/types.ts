@@ -6,7 +6,7 @@ export type SectionId = string;
 export type SpringId = string;
 export type LoadCaseId = string;
 export type LoadCombinationId = string;
-export type AnalysisMode = '3d' | 'xz2d';
+export type AnalysisMode = '3d' | 'xz2d' | 'xy2d' | 'yz2d';
 export type TorsionRestraintEnd = 'none' | 'i' | 'j';
 
 // ── Model entities ──

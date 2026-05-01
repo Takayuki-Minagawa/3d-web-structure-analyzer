@@ -145,6 +145,37 @@ describe('projectStore basic operations', () => {
     expect(added!.y).toBe(0);
   });
 
+  it('supports flattening and coordinate locking for X-Y and Y-Z 2D modes', () => {
+    const state = useProjectStore.getState();
+    const id = state.addNode(1, 2, 3);
+
+    let result = useProjectStore.getState().setAnalysisMode('xy2d');
+    expect(result.ok).toBe(false);
+
+    const xyConverted = useProjectStore.getState().flattenNodesTo2dPlane('xy2d');
+    expect(xyConverted).toEqual([id]);
+    expect(useProjectStore.getState().model.nodes[0]!.z).toBe(0);
+
+    result = useProjectStore.getState().setAnalysisMode('xy2d');
+    expect(result.ok).toBe(true);
+    useProjectStore.getState().updateNode(id, { z: 7 });
+    expect(useProjectStore.getState().model.nodes[0]!.z).toBe(0);
+
+    result = useProjectStore.getState().setAnalysisMode('yz2d');
+    expect(result.ok).toBe(false);
+    const yzConverted = useProjectStore.getState().flattenNodesTo2dPlane('yz2d');
+    expect(yzConverted).toEqual([id]);
+
+    result = useProjectStore.getState().setAnalysisMode('yz2d');
+    expect(result.ok).toBe(true);
+    useProjectStore.getState().updateNode(id, { x: 9 });
+    expect(useProjectStore.getState().model.nodes[0]!.x).toBe(0);
+
+    const addedId = useProjectStore.getState().addNode(5, 6, 7);
+    const added = useProjectStore.getState().model.nodes.find(n => n.id === addedId);
+    expect(added!.x).toBe(0);
+  });
+
   it('preserves user restraint values when toggling back from 2D X-Z to 3D', () => {
     const state = useProjectStore.getState();
     const id = state.addNode(0, 0, 0);

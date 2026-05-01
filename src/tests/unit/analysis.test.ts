@@ -291,6 +291,141 @@ describe('2D X-Z frame analysis mode', () => {
   });
 });
 
+describe('2D plane mode variants', () => {
+  const P = -10;
+  const L = 4;
+  const E = 200e6;
+  const Iz = 8.333e-6;
+  const nu = 0.3;
+  const G = E / (2 * (1 + nu));
+  const A = 0.01;
+
+  it('auto-restrains X-Y out-of-plane DOFs and solves an in-plane cantilever', () => {
+    const model = createBaseModel();
+    model.analysisMode = 'xy2d';
+    model.nodes = [
+      {
+        id: 'n0',
+        x: 0,
+        y: 0,
+        z: 0,
+        restraint: { ...FREE, ux: true, uy: true, rz: true },
+      },
+      { id: 'n1', x: L, y: 0, z: 0, restraint: FREE },
+    ];
+    model.members = [defaultMember('m1', 'n0', 'n1')];
+    model.nodalLoads = [
+      { id: 'nl1', nodeId: 'n1', fx: 0, fy: P, fz: 0, mx: 0, my: 0, mz: 0 },
+    ];
+
+    expect(validateModel(model)).toHaveLength(0);
+    const indexed = buildIndexedModel(model);
+    expect(indexed.nodes[1]!.restraint.uz).toBe(true);
+    expect(indexed.nodes[1]!.restraint.rx).toBe(true);
+    expect(indexed.nodes[1]!.restraint.ry).toBe(true);
+    expect(indexed.nodes[1]!.restraint.uy).toBe(false);
+    expect(indexed.nodes[1]!.restraint.rz).toBe(false);
+
+    const result = analyzeFrame({ model: indexed });
+    const kz = 0.5;
+    const Asz = kz * A;
+    const delta = (P * L * L * L) / (3 * E * Iz) + (P * L) / (G * Asz);
+    expect(result.displacements[8]).toBeCloseTo(0, 8);  // uz
+    expect(result.displacements[9]).toBeCloseTo(0, 8);  // rx
+    expect(result.displacements[10]).toBeCloseTo(0, 8); // ry
+    expect(result.displacements[7]).toBeCloseTo(delta, 4); // uy remains active
+  });
+
+  it('auto-restrains Y-Z out-of-plane DOFs', () => {
+    const model = createBaseModel();
+    model.analysisMode = 'yz2d';
+    model.nodes = [
+      {
+        id: 'n0',
+        x: 0,
+        y: 0,
+        z: 0,
+        restraint: { ...FREE, uy: true, uz: true, rx: true },
+      },
+      { id: 'n1', x: 0, y: L, z: 0, restraint: FREE },
+    ];
+    model.members = [defaultMember('m1', 'n0', 'n1')];
+    model.nodalLoads = [
+      { id: 'nl1', nodeId: 'n1', fx: 0, fy: 0, fz: P, mx: 0, my: 0, mz: 0 },
+    ];
+
+    expect(validateModel(model)).toHaveLength(0);
+    const indexed = buildIndexedModel(model);
+    expect(indexed.nodes[1]!.restraint.ux).toBe(true);
+    expect(indexed.nodes[1]!.restraint.ry).toBe(true);
+    expect(indexed.nodes[1]!.restraint.rz).toBe(true);
+    expect(indexed.nodes[1]!.restraint.uz).toBe(false);
+    expect(indexed.nodes[1]!.restraint.rx).toBe(false);
+  });
+
+  it('rejects off-plane coordinates and nodal loads for X-Y and Y-Z modes', () => {
+    const xyModel = createBaseModel();
+    xyModel.analysisMode = 'xy2d';
+    xyModel.nodes = [
+      { id: 'n0', x: 0, y: 0, z: 0, restraint: FIXED },
+      { id: 'n1', x: L, y: 0, z: 1, restraint: FREE },
+    ];
+    xyModel.members = [defaultMember('m1', 'n0', 'n1')];
+    xyModel.nodalLoads = [
+      { id: 'nl1', nodeId: 'n1', fx: 0, fy: 0, fz: 1, mx: 2, my: 3, mz: 0 },
+    ];
+
+    const xyErrors = validateModel(xyModel);
+    expect(xyErrors.some((error) => error.message.includes('Z座標が0'))).toBe(true);
+    expect(xyErrors.some((error) => error.message.includes('fz, mx, my'))).toBe(true);
+
+    const yzModel = createBaseModel();
+    yzModel.analysisMode = 'yz2d';
+    yzModel.nodes = [
+      { id: 'n0', x: 0, y: 0, z: 0, restraint: FIXED },
+      { id: 'n1', x: 1, y: L, z: 0, restraint: FREE },
+    ];
+    yzModel.members = [defaultMember('m1', 'n0', 'n1')];
+    yzModel.nodalLoads = [
+      { id: 'nl1', nodeId: 'n1', fx: 1, fy: 0, fz: 0, mx: 0, my: 2, mz: 3 },
+    ];
+
+    const yzErrors = validateModel(yzModel);
+    expect(yzErrors.some((error) => error.message.includes('X座標が0'))).toBe(true);
+    expect(yzErrors.some((error) => error.message.includes('fx, my, mz'))).toBe(true);
+  });
+
+  it('rejects member load directions that are normal to the selected 2D plane', () => {
+    const xyModel = createBaseModel();
+    xyModel.analysisMode = 'xy2d';
+    xyModel.nodes = [
+      { id: 'n0', x: 0, y: 0, z: 0, restraint: FIXED },
+      { id: 'n1', x: L, y: 0, z: 0, restraint: FREE },
+    ];
+    xyModel.members = [defaultMember('m1', 'n0', 'n1')];
+    xyModel.memberLoads = [
+      { id: 'ml1', memberId: 'm1', type: 'udl', direction: 'localZ', value: -1 },
+    ];
+
+    const xyErrors = validateModel(xyModel);
+    expect(xyErrors.some((error) => error.message.includes('localZ'))).toBe(true);
+
+    const yzModel = createBaseModel();
+    yzModel.analysisMode = 'yz2d';
+    yzModel.nodes = [
+      { id: 'n0', x: 0, y: 0, z: 0, restraint: FIXED },
+      { id: 'n1', x: 0, y: L, z: 0, restraint: FREE },
+    ];
+    yzModel.members = [defaultMember('m1', 'n0', 'n1')];
+    yzModel.memberLoads = [
+      { id: 'ml1', memberId: 'm1', type: 'udl', direction: 'localY', value: -1 },
+    ];
+
+    const yzErrors = validateModel(yzModel);
+    expect(yzErrors.some((error) => error.message.includes('localY'))).toBe(true);
+  });
+});
+
 describe('3D Torsion member', () => {
   const T = 50; // Torque about X
   const L = 5;

@@ -4,7 +4,10 @@ import type { EditAction } from '../../rendering/threeApp';
 import { useProjectStore } from '../../state/projectStore';
 import { useViewStore } from '../../state/viewStore';
 import { useSelectionStore } from '../../state/selectionStore';
-import { isXz2dMode } from '../../core/model/analysisMode';
+import {
+  getAnalysisMode,
+  getDefaultMemberLoadDirectionForMode,
+} from '../../core/model/analysisMode';
 
 const FIXED_RESTRAINT = { ux: true, uy: true, uz: true, rx: true, ry: true, rz: true };
 const FREE_RESTRAINT = { ux: false, uy: false, uz: false, rx: false, ry: false, rz: false };
@@ -66,7 +69,11 @@ export const CanvasPanel: React.FC = () => {
         break;
       case 'addMemberLoad': {
         const currentModel = useProjectStore.getState().model;
-        const direction = isXz2dMode(currentModel) ? 'localZ' : 'localY';
+        const direction = getDefaultMemberLoadDirectionForMode(
+          currentModel,
+          action.memberId,
+          getAnalysisMode(currentModel)
+        );
         addMemberLoad({ memberId: action.memberId, type: 'udl', direction, value: -5 });
         selectMember(action.memberId);
         break;
