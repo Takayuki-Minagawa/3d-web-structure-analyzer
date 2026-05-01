@@ -48,10 +48,12 @@ export const PropertyPanel: React.FC = () => {
   const showMemberLabels = useViewStore((s) => s.showMemberLabels);
   const showLoads = useViewStore((s) => s.showLoads);
   const showSupports = useViewStore((s) => s.showSupports);
+  const animateDeformation = useViewStore((s) => s.animateDeformation);
   const setShowNodeLabels = useViewStore((s) => s.setShowNodeLabels);
   const setShowMemberLabels = useViewStore((s) => s.setShowMemberLabels);
   const setShowLoads = useViewStore((s) => s.setShowLoads);
   const setShowSupports = useViewStore((s) => s.setShowSupports);
+  const setAnimateDeformation = useViewStore((s) => s.setAnimateDeformation);
 
   const t = useT();
 
@@ -121,6 +123,10 @@ export const PropertyPanel: React.FC = () => {
             <label className="checkbox-label">
               <input type="checkbox" checked={showSupports} onChange={(e) => setShowSupports(e.target.checked)} />
               {t('prop.supports')}
+            </label>
+            <label className="checkbox-label">
+              <input type="checkbox" checked={animateDeformation} onChange={(e) => setAnimateDeformation(e.target.checked)} />
+              {t('prop.animateDeformation')}
             </label>
           </div>
           <div className="prop-group">

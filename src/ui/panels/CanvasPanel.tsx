@@ -34,6 +34,7 @@ export const CanvasPanel: React.FC = () => {
   const showMemberLabels = useViewStore((s) => s.showMemberLabels);
   const showLoads = useViewStore((s) => s.showLoads);
   const showSupports = useViewStore((s) => s.showSupports);
+  const animateDeformation = useViewStore((s) => s.animateDeformation);
   const deformationScale = useViewStore((s) => s.deformationScale);
   const diagramScale = useViewStore((s) => s.diagramScale);
 
@@ -187,6 +188,10 @@ export const CanvasPanel: React.FC = () => {
   useEffect(() => {
     appRef.current?.setShowSupports(showSupports);
   }, [showSupports]);
+
+  useEffect(() => {
+    appRef.current?.setAnimateDeformation(animateDeformation);
+  }, [animateDeformation]);
 
   return (
     <div

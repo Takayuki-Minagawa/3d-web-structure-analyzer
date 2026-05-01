@@ -14,6 +14,8 @@ const THEME_COLORS = {
     gridLine: 0xeeeeee,
     labelNode: '#0044aa',
     labelMember: '#aa4400',
+    labelDiagram: '#9d1c1c',
+    labelBackground: 'rgba(255, 255, 255, 0.82)',
   },
   dark: {
     background: 0x252535,
@@ -21,6 +23,8 @@ const THEME_COLORS = {
     gridLine: 0x333344,
     labelNode: '#66aaff',
     labelMember: '#ffaa66',
+    labelDiagram: '#ffd166',
+    labelBackground: 'rgba(20, 20, 30, 0.82)',
   },
 } as const;
 
@@ -84,6 +88,9 @@ export class ThreeApp {
   private result: AnalysisResult | null = null;
   private displayMode: DisplayMode = 'model';
   private deformationScale = 50;
+  private animateDeformation = false;
+  private deformationAnimationFactor = 1;
+  private lastAnimationRebuildFactor = 1;
   private diagramScale = 1;
   private selectedNodeIds: ReadonlySet<string> = new Set();
   private selectedMemberIds: ReadonlySet<string> = new Set();
@@ -153,6 +160,13 @@ export class ThreeApp {
   private animate = (): void => {
     this.animationId = requestAnimationFrame(this.animate);
     this.controls.update();
+    if (this.animateDeformation && this.displayMode === 'deformation' && this.result) {
+      this.deformationAnimationFactor = Math.sin(performance.now() / 650);
+      if (Math.abs(this.deformationAnimationFactor - this.lastAnimationRebuildFactor) > 0.02) {
+        this.lastAnimationRebuildFactor = this.deformationAnimationFactor;
+        this.rebuildResults();
+      }
+    }
     this.renderer.render(this.scene, this.camera);
     this.drawLabels();
   };
@@ -204,6 +218,13 @@ export class ThreeApp {
 
   setDeformationScale(scale: number): void {
     this.deformationScale = scale;
+    this.rebuildResults();
+  }
+
+  setAnimateDeformation(value: boolean): void {
+    this.animateDeformation = value;
+    this.deformationAnimationFactor = 1;
+    this.lastAnimationRebuildFactor = 1;
     this.rebuildResults();
   }
 
@@ -520,7 +541,7 @@ export class ThreeApp {
     const nodeMap = new Map(this.model.nodes.map(n => [n.id, n]));
     const nodeIdToIndex = new Map(this.model.nodes.map((n, i) => [n.id, i]));
     const d = this.result.displacements;
-    const scale = this.deformationScale;
+    const scale = this.deformationScale * (this.animateDeformation ? this.deformationAnimationFactor : 1);
     const positions: number[] = [];
 
     for (const m of this.model.members) {
@@ -587,18 +608,6 @@ export class ThreeApp {
         px = cx / cl; py = cy / cl; pz = cz / cl;
       }
 
-      const getValue = (p: DiagramPoint): number => {
-        switch (mode) {
-          case 'N': return p.N;
-          case 'Vy': return p.Vy;
-          case 'Vz': return p.Vz;
-          case 'Mx': return p.Mx;
-          case 'My': return p.My;
-          case 'Mz': return p.Mz;
-          default: return 0;
-        }
-      };
-
       // Build ribbon (line strip of offset positions)
       const ribbonPositions: number[] = [];
       const ribbonColors: number[] = [];
@@ -609,7 +618,7 @@ export class ThreeApp {
         const by = ni.y + dy * t;
         const bz = ni.z + dz * t;
 
-        const val = getValue(p);
+        const val = this.getDiagramValue(p, mode);
         const offset = val * scale;
 
         ribbonPositions.push(
@@ -640,6 +649,44 @@ export class ThreeApp {
     }
   }
 
+  private getDiagramValue(point: DiagramPoint, mode: DisplayMode): number {
+    switch (mode) {
+      case 'N': return point.N;
+      case 'Vy': return point.Vy;
+      case 'Vz': return point.Vz;
+      case 'Mx': return point.Mx;
+      case 'My': return point.My;
+      case 'Mz': return point.Mz;
+      default: return 0;
+    }
+  }
+
+  private getDiagramOffsetDirection(ni: { x: number; y: number; z: number }, nj: { x: number; y: number; z: number }): THREE.Vector3 | null {
+    const dx = nj.x - ni.x;
+    const dy = nj.y - ni.y;
+    const dz = nj.z - ni.z;
+    const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (L < 1e-10) return null;
+
+    const lx = dx / L, ly = dy / L, lz = dz / L;
+    if (Math.abs(lz) > 0.95) {
+      return new THREE.Vector3(0, 1, 0);
+    }
+
+    const cx = ly;
+    const cy = -lx;
+    const cz = 0;
+    const cl = Math.sqrt(cx * cx + cy * cy + cz * cz) || 1;
+    return new THREE.Vector3(cx / cl, cy / cl, cz / cl);
+  }
+
+  private formatDiagramValue(value: number): string {
+    if (Math.abs(value) < 1e-10) return '0';
+    const abs = Math.abs(value);
+    if (abs >= 10000 || abs < 0.001) return value.toExponential(2);
+    return value.toFixed(abs >= 100 ? 1 : 3).replace(/\.?0+$/, '');
+  }
+
   // ── Labels ──
 
   private projectToScreen(pos: THREE.Vector3, tmp: THREE.Vector3): { x: number; y: number } | null {
@@ -654,7 +701,8 @@ export class ThreeApp {
   private drawLabels(): void {
     this.labelCtx.clearRect(0, 0, this.labelCanvas.width, this.labelCanvas.height);
     if (!this.model) return;
-    if (!this.showNodeLabels && !this.showMemberLabels) return;
+    const shouldDrawDiagramLabels = this.result && this.displayMode !== 'model' && this.displayMode !== 'deformation';
+    if (!this.showNodeLabels && !this.showMemberLabels && !shouldDrawDiagramLabels) return;
 
     this.labelCtx.font = LABEL_FONT;
     this.labelCtx.textAlign = 'center';
@@ -684,6 +732,72 @@ export class ThreeApp {
         const s = this.projectToScreen(wp, tmp);
         if (s) this.labelCtx.fillText(m.id, s.x, s.y - 4);
       }
+    }
+
+    if (shouldDrawDiagramLabels) {
+      this.drawDiagramValueLabels(tmp, colors);
+    }
+  }
+
+  private drawDiagramValueLabels(
+    tmp: THREE.Vector3,
+    colors: typeof THEME_COLORS.dark | typeof THEME_COLORS.light
+  ): void {
+    if (!this.model || !this.result) return;
+
+    const nodeMap = new Map(this.model.nodes.map(n => [n.id, n]));
+    const wp = new THREE.Vector3();
+
+    this.labelCtx.font = LABEL_FONT;
+    this.labelCtx.textAlign = 'left';
+    this.labelCtx.textBaseline = 'middle';
+
+    for (const m of this.model.members) {
+      const ni = nodeMap.get(m.ni);
+      const nj = nodeMap.get(m.nj);
+      const diagData = this.result.diagrams[m.id];
+      if (!ni || !nj || !diagData || diagData.points.length === 0) continue;
+
+      const dx = nj.x - ni.x;
+      const dy = nj.y - ni.y;
+      const dz = nj.z - ni.z;
+      const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (length < 1e-10) continue;
+
+      const offsetDirection = this.getDiagramOffsetDirection(ni, nj);
+      if (!offsetDirection) continue;
+
+      let maxPoint: DiagramPoint | null = null;
+      let maxValue = 0;
+      for (const point of diagData.points) {
+        const value = this.getDiagramValue(point, this.displayMode);
+        if (!maxPoint || Math.abs(value) > Math.abs(maxValue)) {
+          maxPoint = point;
+          maxValue = value;
+        }
+      }
+      if (!maxPoint || Math.abs(maxValue) < 1e-10) continue;
+
+      const t = maxPoint.x / length;
+      wp.set(
+        ni.x + dx * t,
+        ni.y + dy * t,
+        ni.z + dz * t
+      ).add(offsetDirection.clone().multiplyScalar(maxValue * this.diagramScale));
+
+      const screen = this.projectToScreen(wp, tmp);
+      if (!screen) continue;
+
+      const text = `${this.displayMode} ${this.formatDiagramValue(maxValue)}`;
+      const paddingX = 4;
+      const width = this.labelCtx.measureText(text).width + paddingX * 2;
+      const height = 16;
+      const x = screen.x + 6;
+      const y = screen.y - 6;
+      this.labelCtx.fillStyle = colors.labelBackground;
+      this.labelCtx.fillRect(x - paddingX, y - height / 2, width, height);
+      this.labelCtx.fillStyle = colors.labelDiagram;
+      this.labelCtx.fillText(text, x, y);
     }
   }
 

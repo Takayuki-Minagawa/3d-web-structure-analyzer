@@ -12,6 +12,7 @@ interface ViewState {
   showMemberLabels: boolean;
   showLoads: boolean;
   showSupports: boolean;
+  animateDeformation: boolean;
   deformationScale: number;
   diagramScale: number;
   setDisplayMode: (mode: DisplayMode) => void;
@@ -22,6 +23,7 @@ interface ViewState {
   setShowMemberLabels: (v: boolean) => void;
   setShowLoads: (v: boolean) => void;
   setShowSupports: (v: boolean) => void;
+  setAnimateDeformation: (v: boolean) => void;
   setDeformationScale: (v: number) => void;
   setDiagramScale: (v: number) => void;
 }
@@ -46,6 +48,7 @@ export const useViewStore = create<ViewState>((set) => ({
   showMemberLabels: true,
   showLoads: true,
   showSupports: true,
+  animateDeformation: false,
   deformationScale: 50,
   diagramScale: 1,
   setDisplayMode: (mode) => set({ displayMode: mode }),
@@ -56,6 +59,7 @@ export const useViewStore = create<ViewState>((set) => ({
   setShowMemberLabels: (v) => set({ showMemberLabels: v }),
   setShowLoads: (v) => set({ showLoads: v }),
   setShowSupports: (v) => set({ showSupports: v }),
+  setAnimateDeformation: (v) => set({ animateDeformation: v }),
   setDeformationScale: (v) => set({ deformationScale: v }),
   setDiagramScale: (v) => set({ diagramScale: v }),
 }));
