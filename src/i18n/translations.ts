@@ -201,6 +201,8 @@ const ja = {
   'prop.noLoads': '荷重なし',
   'prop.targetNode': '節点:',
   'prop.targetMember': '部材:',
+  'prop.library': 'ライブラリ:',
+  'prop.addFromLibrary': 'ライブラリから追加',
 } as const;
 
 const en: Record<keyof typeof ja, string> = {
@@ -391,6 +393,8 @@ const en: Record<keyof typeof ja, string> = {
   'prop.noLoads': 'No loads',
   'prop.targetNode': 'Node:',
   'prop.targetMember': 'Member:',
+  'prop.library': 'Library:',
+  'prop.addFromLibrary': 'Add from Library',
 };
 
 export type TKey = keyof typeof ja;
