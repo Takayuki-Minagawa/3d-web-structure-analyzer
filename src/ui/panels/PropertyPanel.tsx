@@ -192,13 +192,16 @@ const NodeProperties: React.FC<{
 const AnalysisModeEditor: React.FC = () => {
   const model = useProjectStore((s) => s.model);
   const setAnalysisMode = useProjectStore((s) => s.setAnalysisMode);
+  const flattenNodesToXzPlane = useProjectStore((s) => s.flattenNodesToXzPlane);
   const [error, setError] = React.useState<string | null>(null);
+  const [offPlaneNodeIds, setOffPlaneNodeIds] = React.useState<string[]>([]);
   const t = useT();
   const mode = getAnalysisMode(model);
 
   React.useEffect(() => {
     if (error && findNodesOffXzPlane(model).length === 0) {
       setError(null);
+      setOffPlaneNodeIds([]);
     }
   }, [error, model]);
 
@@ -212,6 +215,7 @@ const AnalysisModeEditor: React.FC = () => {
           onChange={(e) => {
             const result = setAnalysisMode(e.target.value as AnalysisMode);
             setError(result.ok ? null : result.error);
+            setOffPlaneNodeIds(result.ok ? [] : result.nodeIds);
           }}
         >
           <option value="3d">{t('prop.analysisMode3d')}</option>
@@ -219,6 +223,20 @@ const AnalysisModeEditor: React.FC = () => {
         </select>
       </div>
       {error && <div className="error-text">{error}</div>}
+      {offPlaneNodeIds.length > 0 && (
+        <div className="prop-actions">
+          <button
+            onClick={() => {
+              const converted = flattenNodesToXzPlane();
+              const result = setAnalysisMode(XZ_2D_MODE);
+              setError(result.ok ? null : result.error);
+              setOffPlaneNodeIds(result.ok ? [] : converted);
+            }}
+          >
+            {t('prop.flattenToXz2d')}
+          </button>
+        </div>
+      )}
     </div>
   );
 };

@@ -142,6 +142,7 @@ interface ProjectState {
   setAnalysisResult: (resp: WorkerResponse) => void;
   markResultStale: () => void;
   setAnalysisMode: (mode: AnalysisMode) => AnalysisModeUpdateResult;
+  flattenNodesToXzPlane: () => string[];
 
   // Project
   loadModel: (model: ProjectModel) => void;
@@ -470,6 +471,23 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       isResultStale: true,
     }));
     return { ok: true };
+  },
+
+  flattenNodesToXzPlane: () => {
+    const offPlaneNodeIds = findNodesOffXzPlane(get().model).map((node) => node.id);
+    if (offPlaneNodeIds.length === 0) return [];
+
+    set((s) => ({
+      model: {
+        ...s.model,
+        nodes: s.model.nodes.map((node) =>
+          offPlaneNodeIds.includes(node.id) ? { ...node, y: 0 } : node
+        ),
+      },
+      isResultStale: true,
+    }));
+
+    return offPlaneNodeIds;
   },
 
   loadModel: (model) => set((s) => ({
