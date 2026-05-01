@@ -456,6 +456,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       model: {
         ...s.model,
         loadCases: [...getLoadCases(s.model), { id, name: name ?? 'New Case' }],
+        loadCombinations: getLoadCombinations(s.model).map((combo) => ({
+          ...combo,
+          factors: [...combo.factors, { loadCaseId: id, factor: 0 }],
+        })),
         activeLoadCaseId: id,
         activeLoadCombinationId: null,
       },

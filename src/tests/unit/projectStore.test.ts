@@ -38,6 +38,19 @@ describe('projectStore basic operations', () => {
     expect(load!.loadCaseId).toBe(loadCaseId);
   });
 
+  it('adds new load cases to existing combinations with a zero factor', () => {
+    const state = useProjectStore.getState();
+    const defaultCaseId = useProjectStore.getState().model.loadCases![0]!.id;
+    const comboId = state.addLoadCombination('Combo');
+    const liveId = useProjectStore.getState().addLoadCase('Live');
+
+    const combo = useProjectStore.getState().model.loadCombinations!.find((item) => item.id === comboId);
+    expect(combo!.factors).toEqual([
+      { loadCaseId: defaultCaseId, factor: 1 },
+      { loadCaseId: liveId, factor: 0 },
+    ]);
+  });
+
   it('removes load cases by reassigning loads to the remaining case', () => {
     const state = useProjectStore.getState();
     const nodeId = state.addNode(0, 0, 0);
