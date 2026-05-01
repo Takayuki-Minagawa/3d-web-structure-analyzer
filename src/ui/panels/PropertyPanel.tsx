@@ -16,6 +16,7 @@ import {
   getLoadCombinations,
 } from '../../core/model/loadCases';
 import { MATERIAL_PRESETS, SECTION_PRESETS } from '../../core/model/library';
+import { getMemberAxisRotationDofOffset } from '../../core/model/torsionRestraint';
 
 /** Distributive Omit that works correctly with union types */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
@@ -276,6 +277,7 @@ const MemberProperties: React.FC<{
   const ni = model.nodes.find((n) => n.id === member.ni);
   const nj = model.nodes.find((n) => n.id === member.nj);
   const L = ni && nj ? Math.sqrt((nj.x - ni.x) ** 2 + (nj.y - ni.y) ** 2 + (nj.z - ni.z) ** 2) : 0;
+  const supportsTwistRestraint = getMemberAxisRotationDofOffset(model, member) !== null;
 
   return (
     <div className="prop-group">
@@ -300,10 +302,13 @@ const MemberProperties: React.FC<{
         <select value={member.torsionRestraint ?? 'none'}
           onChange={(e) => onUpdate(member.id, { torsionRestraint: e.target.value as TorsionRestraintEnd })}>
           <option value="none">{t('prop.torsionRestraintNone')}</option>
-          <option value="i">{t('prop.torsionRestraintI')}</option>
-          <option value="j">{t('prop.torsionRestraintJ')}</option>
+          <option value="i" disabled={!supportsTwistRestraint}>{t('prop.torsionRestraintI')}</option>
+          <option value="j" disabled={!supportsTwistRestraint}>{t('prop.torsionRestraintJ')}</option>
         </select>
       </div>
+      {!supportsTwistRestraint && (
+        <div className="muted">{t('prop.torsionRestraintAxisOnly')}</div>
+      )}
       <div className="prop-title">{t('prop.memberLoads')}</div>
       {memberLoads.length === 0 && <div className="muted">{t('prop.noLoads')}</div>}
       {memberLoads.map((load) => (
