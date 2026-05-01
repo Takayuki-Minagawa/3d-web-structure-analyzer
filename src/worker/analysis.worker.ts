@@ -3,13 +3,16 @@ import type { AnalysisError } from '../core/model/types';
 import { buildIndexedModel } from '../core/model/indexing';
 import { validateModel } from '../core/model/validation';
 import { analyzeFrame } from '../core/analysis/analyzeFrame';
+import { resolveAnalysisLoadModel } from '../core/model/loadCases';
 
 self.onmessage = (e: MessageEvent<WorkerRequest>) => {
   const req = e.data;
   if (req.type === 'analyze') {
     try {
+      const analysisModel = resolveAnalysisLoadModel(req.model);
+
       // Validate
-      const errors = validateModel(req.model);
+      const errors = validateModel(analysisModel);
       if (errors.length > 0) {
         const firstError = errors[0]!;
         const resp: WorkerResponse = {
@@ -21,7 +24,7 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
       }
 
       // Index
-      const indexed = buildIndexedModel(req.model);
+      const indexed = buildIndexedModel(analysisModel);
 
       // Analyze
       const result = analyzeFrame({ model: indexed });

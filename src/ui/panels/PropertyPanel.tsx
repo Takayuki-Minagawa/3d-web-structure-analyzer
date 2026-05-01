@@ -9,6 +9,12 @@ import {
   getAnalysisMode,
   XZ_2D_MODE,
 } from '../../core/model/analysisMode';
+import {
+  getActiveLoadCaseId,
+  getActiveLoadCombination,
+  getLoadCases,
+  getLoadCombinations,
+} from '../../core/model/loadCases';
 
 /** Distributive Omit that works correctly with union types */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
@@ -89,6 +95,7 @@ export const PropertyPanel: React.FC = () => {
 
       {selectedNodes.length === 0 && selectedMembers.length === 0 && (
         <>
+          <LoadCasesEditor />
           <MaterialsEditor />
           <SectionsEditor />
           <CouplingsEditor />
@@ -138,6 +145,8 @@ const NodeProperties: React.FC<{
   onRemoveLoad: (id: string) => void;
 }> = ({ node, analysisMode, nodalLoads, onUpdate, onDelete, onAddLoad, onUpdateLoad, onRemoveLoad }) => {
   const t = useT();
+  const model = useProjectStore((s) => s.model);
+  const loadCases = getLoadCases(model);
   const restraintKeys = ['ux', 'uy', 'uz', 'rx', 'ry', 'rz'] as const;
   const restraintLabels = {
     ux: t('prop.dirX'), uy: t('prop.dirY'), uz: t('prop.dirZ'),
@@ -171,6 +180,15 @@ const NodeProperties: React.FC<{
       {nodalLoads.length === 0 && <div className="muted">{t('prop.noLoads')}</div>}
       {nodalLoads.map((load) => (
         <div key={load.id} className="load-item">
+          <div className="prop-row">
+            <label>{t('prop.loadCase')}</label>
+            <select value={load.loadCaseId ?? getActiveLoadCaseId(model)}
+              onChange={(e) => onUpdateLoad(load.id, { loadCaseId: e.target.value })}>
+              {loadCases.map((loadCase) => (
+                <option key={loadCase.id} value={loadCase.id}>{loadCase.name}</option>
+              ))}
+            </select>
+          </div>
           {(['fx', 'fy', 'fz', 'mx', 'my', 'mz'] as const).map((f) => (
             <div className="prop-row" key={f}>
               <label>{f}:</label>
@@ -253,6 +271,7 @@ const MemberProperties: React.FC<{
   onRemoveLoad: (id: string) => void;
 }> = ({ member, analysisMode, model, memberLoads, onUpdate, onDelete, onAddLoad, onUpdateLoad, onRemoveLoad }) => {
   const t = useT();
+  const loadCases = getLoadCases(model);
   const ni = model.nodes.find((n) => n.id === member.ni);
   const nj = model.nodes.find((n) => n.id === member.nj);
   const L = ni && nj ? Math.sqrt((nj.x - ni.x) ** 2 + (nj.y - ni.y) ** 2 + (nj.z - ni.z) ** 2) : 0;
@@ -288,6 +307,15 @@ const MemberProperties: React.FC<{
       {memberLoads.length === 0 && <div className="muted">{t('prop.noLoads')}</div>}
       {memberLoads.map((load) => (
         <div key={load.id} className="load-item">
+          <div className="prop-row">
+            <label>{t('prop.loadCase')}</label>
+            <select value={load.loadCaseId ?? getActiveLoadCaseId(model)}
+              onChange={(e) => onUpdateLoad(load.id, { loadCaseId: e.target.value })}>
+              {loadCases.map((loadCase) => (
+                <option key={loadCase.id} value={loadCase.id}>{loadCase.name}</option>
+              ))}
+            </select>
+          </div>
           {load.type === 'cmq' ? (
             <>
               <div className="prop-row"><label>{t('prop.loadType')}</label><span>{t('prop.loadTypeCmq')}</span></div>
@@ -354,6 +382,105 @@ const MemberProperties: React.FC<{
       <div className="prop-actions">
         <button onClick={() => onAddLoad(member.id)}>{t('prop.addLoad')}</button>
         <button className="danger" onClick={() => onDelete(member.id)}>{t('prop.delete')}</button>
+      </div>
+    </div>
+  );
+};
+
+const LoadCasesEditor: React.FC = () => {
+  const model = useProjectStore((s) => s.model);
+  const addLoadCase = useProjectStore((s) => s.addLoadCase);
+  const updateLoadCase = useProjectStore((s) => s.updateLoadCase);
+  const removeLoadCase = useProjectStore((s) => s.removeLoadCase);
+  const setActiveLoadCase = useProjectStore((s) => s.setActiveLoadCase);
+  const addLoadCombination = useProjectStore((s) => s.addLoadCombination);
+  const updateLoadCombination = useProjectStore((s) => s.updateLoadCombination);
+  const removeLoadCombination = useProjectStore((s) => s.removeLoadCombination);
+  const setActiveLoadCombination = useProjectStore((s) => s.setActiveLoadCombination);
+  const t = useT();
+
+  const loadCases = getLoadCases(model);
+  const loadCombinations = getLoadCombinations(model);
+  const activeLoadCaseId = getActiveLoadCaseId(model);
+  const activeLoadCombination = getActiveLoadCombination(model);
+
+  return (
+    <div className="prop-group">
+      <div className="prop-title">{t('prop.loadCases')}</div>
+      <div className="prop-row">
+        <label>{t('prop.analysisTarget')}</label>
+        <select
+          value={activeLoadCombination ? `combo:${activeLoadCombination.id}` : `case:${activeLoadCaseId}`}
+          onChange={(e) => {
+            const [kind, id] = e.target.value.split(':');
+            if (kind === 'combo') {
+              setActiveLoadCombination(id ?? null);
+            } else if (id) {
+              setActiveLoadCase(id);
+            }
+          }}
+        >
+          {loadCases.map((loadCase) => (
+            <option key={loadCase.id} value={`case:${loadCase.id}`}>
+              {t('prop.loadCase')} {loadCase.name}
+            </option>
+          ))}
+          {loadCombinations.map((combo) => (
+            <option key={combo.id} value={`combo:${combo.id}`}>
+              {t('prop.loadCombination')} {combo.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {loadCases.map((loadCase) => (
+        <div key={loadCase.id} className="editable-item">
+          <div className="prop-row">
+            <label>{t('prop.loadCase')}</label>
+            <input type="text" value={loadCase.name}
+              onChange={(e) => updateLoadCase(loadCase.id, { name: e.target.value })} />
+          </div>
+          {loadCases.length > 1 && (
+            <button className="danger small" onClick={() => removeLoadCase(loadCase.id)}>
+              {t('prop.removeLoadCase')}
+            </button>
+          )}
+        </div>
+      ))}
+
+      <div className="prop-title">{t('prop.loadCombinations')}</div>
+      {loadCombinations.length === 0 && <div className="muted">{t('prop.noLoadCombinations')}</div>}
+      {loadCombinations.map((combo) => (
+        <div key={combo.id} className="editable-item">
+          <div className="prop-row">
+            <label>{t('prop.loadCombination')}</label>
+            <input type="text" value={combo.name}
+              onChange={(e) => updateLoadCombination(combo.id, { name: e.target.value })} />
+          </div>
+          {loadCases.map((loadCase) => {
+            const factor = combo.factors.find((term) => term.loadCaseId === loadCase.id)?.factor ?? 0;
+            return (
+              <div className="prop-row" key={loadCase.id}>
+                <label>{loadCase.name}</label>
+                <input type="number" step="0.1" value={factor}
+                  onChange={(e) => {
+                    const nextFactor = Number(e.target.value);
+                    const otherFactors = combo.factors.filter((term) => term.loadCaseId !== loadCase.id);
+                    updateLoadCombination(combo.id, {
+                      factors: [...otherFactors, { loadCaseId: loadCase.id, factor: nextFactor }],
+                    });
+                  }} />
+              </div>
+            );
+          })}
+          <button className="danger small" onClick={() => removeLoadCombination(combo.id)}>
+            {t('prop.removeLoadCombination')}
+          </button>
+        </div>
+      ))}
+      <div className="prop-actions">
+        <button onClick={() => addLoadCase()}>{t('prop.addLoadCase')}</button>
+        <button onClick={() => addLoadCombination()}>{t('prop.addLoadCombination')}</button>
       </div>
     </div>
   );

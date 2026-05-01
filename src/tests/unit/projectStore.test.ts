@@ -9,12 +9,67 @@ describe('projectStore basic operations', () => {
   it('creates default model with 3D properties', () => {
     const model = useProjectStore.getState().model;
     expect(model.analysisMode).toBe('3d');
+    expect(model.loadCases).toHaveLength(1);
+    expect(model.activeLoadCaseId).toBe(model.loadCases![0]!.id);
     expect(model.materials.length).toBeGreaterThan(0);
     expect(model.sections.length).toBeGreaterThan(0);
     expect(model.materials[0]!.G).toBeGreaterThan(0);
     expect(model.sections[0]!.Ix).toBeGreaterThan(0);
     expect(model.sections[0]!.Iy).toBeGreaterThan(0);
     expect(model.sections[0]!.Iz).toBeGreaterThan(0);
+  });
+
+  it('assigns new loads to the active load case', () => {
+    const state = useProjectStore.getState();
+    const nodeId = state.addNode(0, 0, 0);
+    const loadCaseId = useProjectStore.getState().addLoadCase('Live');
+
+    const loadId = useProjectStore.getState().addNodalLoad({
+      nodeId,
+      fx: 1,
+      fy: 0,
+      fz: 0,
+      mx: 0,
+      my: 0,
+      mz: 0,
+    });
+
+    const load = useProjectStore.getState().model.nodalLoads.find((item) => item.id === loadId);
+    expect(load!.loadCaseId).toBe(loadCaseId);
+  });
+
+  it('adds new load cases to existing combinations with a zero factor', () => {
+    const state = useProjectStore.getState();
+    const defaultCaseId = useProjectStore.getState().model.loadCases![0]!.id;
+    const comboId = state.addLoadCombination('Combo');
+    const liveId = useProjectStore.getState().addLoadCase('Live');
+
+    const combo = useProjectStore.getState().model.loadCombinations!.find((item) => item.id === comboId);
+    expect(combo!.factors).toEqual([
+      { loadCaseId: defaultCaseId, factor: 1 },
+      { loadCaseId: liveId, factor: 0 },
+    ]);
+  });
+
+  it('removes load cases by reassigning loads to the remaining case', () => {
+    const state = useProjectStore.getState();
+    const nodeId = state.addNode(0, 0, 0);
+    const liveId = useProjectStore.getState().addLoadCase('Live');
+    useProjectStore.getState().addNodalLoad({
+      nodeId,
+      fx: 1,
+      fy: 0,
+      fz: 0,
+      mx: 0,
+      my: 0,
+      mz: 0,
+    });
+
+    useProjectStore.getState().removeLoadCase(liveId);
+
+    const model = useProjectStore.getState().model;
+    expect(model.loadCases).toHaveLength(1);
+    expect(model.nodalLoads[0]!.loadCaseId).toBe(model.loadCases![0]!.id);
   });
 
   it('adds a 3D node with z coordinate', () => {

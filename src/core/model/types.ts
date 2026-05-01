@@ -4,6 +4,8 @@ export type MemberId = string;
 export type MaterialId = string;
 export type SectionId = string;
 export type SpringId = string;
+export type LoadCaseId = string;
+export type LoadCombinationId = string;
 export type AnalysisMode = '3d' | 'xz2d';
 export type TorsionRestraintEnd = 'none' | 'i' | 'j';
 
@@ -73,6 +75,7 @@ export interface Member {
 // ── Loads ──
 export interface NodalLoad {
   id: string;
+  loadCaseId?: LoadCaseId;
   nodeId: NodeId;
   fx: number;
   fy: number;
@@ -86,6 +89,7 @@ export type MemberLoadDirection = 'localX' | 'localY' | 'localZ';
 
 export interface PointMemberLoad {
   id: string;
+  loadCaseId?: LoadCaseId;
   memberId: MemberId;
   type: 'point';
   direction: MemberLoadDirection;
@@ -95,6 +99,7 @@ export interface PointMemberLoad {
 
 export interface UniformMemberLoad {
   id: string;
+  loadCaseId?: LoadCaseId;
   memberId: MemberId;
   type: 'udl';
   direction: MemberLoadDirection;
@@ -103,6 +108,7 @@ export interface UniformMemberLoad {
 
 export interface CMQMemberLoad {
   id: string;
+  loadCaseId?: LoadCaseId;
   memberId: MemberId;
   type: 'cmq';
   // i-end forces/moments (local)
@@ -123,6 +129,22 @@ export interface CMQMemberLoad {
 }
 
 export type MemberLoad = PointMemberLoad | UniformMemberLoad | CMQMemberLoad;
+
+export interface LoadCase {
+  id: LoadCaseId;
+  name: string;
+}
+
+export interface LoadCombinationTerm {
+  loadCaseId: LoadCaseId;
+  factor: number;
+}
+
+export interface LoadCombination {
+  id: LoadCombinationId;
+  name: string;
+  factors: LoadCombinationTerm[];
+}
 
 // ── Coupling constraints ──
 export interface CouplingConstraint {
@@ -145,6 +167,10 @@ export interface ProjectModel {
   materials: Material[];
   sections: Section[];
   springs: Spring[];
+  loadCases?: LoadCase[];
+  loadCombinations?: LoadCombination[];
+  activeLoadCaseId?: LoadCaseId;
+  activeLoadCombinationId?: LoadCombinationId | null;
   members: Member[];
   couplings: CouplingConstraint[];
   nodalLoads: NodalLoad[];

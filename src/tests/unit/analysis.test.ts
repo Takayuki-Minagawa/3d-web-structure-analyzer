@@ -3,6 +3,7 @@ import { buildIndexedModel } from '../../core/model/indexing';
 import { validateModel } from '../../core/model/validation';
 import { analyzeFrame } from '../../core/analysis/analyzeFrame';
 import { partitionDofs } from '../../core/analysis/constraints';
+import { resolveAnalysisLoadModel } from '../../core/model/loadCases';
 import type { AnalysisError, ProjectModel, Restraint } from '../../core/model/types';
 
 const FREE: Restraint = { ux: false, uy: false, uz: false, rx: false, ry: false, rz: false };
@@ -147,6 +148,50 @@ describe('3D Axial member', () => {
     const delta = (F * L) / (E * A);
     // Node 1 ux at DOF 6*1 + 0 = 6
     expect(result.displacements[6]).toBeCloseTo(delta, 8);
+  });
+});
+
+describe('Load cases and combinations', () => {
+  it('filters active load cases and expands load combinations', () => {
+    const model = createBaseModel();
+    model.loadCases = [
+      { id: 'dead', name: 'Dead' },
+      { id: 'live', name: 'Live' },
+    ];
+    model.activeLoadCaseId = 'dead';
+    model.activeLoadCombinationId = null;
+    model.loadCombinations = [
+      {
+        id: 'combo1',
+        name: '1.2D+1.6L',
+        factors: [
+          { loadCaseId: 'dead', factor: 1.2 },
+          { loadCaseId: 'live', factor: 1.6 },
+        ],
+      },
+    ];
+    model.nodes = [
+      { id: 'n0', x: 0, y: 0, z: 0, restraint: FIXED },
+      { id: 'n1', x: 4, y: 0, z: 0, restraint: { ...FREE, uy: true, uz: true, rx: true, ry: true, rz: true } },
+    ];
+    model.members = [defaultMember('m1', 'n0', 'n1')];
+    model.nodalLoads = [
+      { id: 'dead-load', loadCaseId: 'dead', nodeId: 'n1', fx: 10, fy: 0, fz: 0, mx: 0, my: 0, mz: 0 },
+      { id: 'live-load', loadCaseId: 'live', nodeId: 'n1', fx: 5, fy: 0, fz: 0, mx: 0, my: 0, mz: 0 },
+    ];
+
+    const activeCaseModel = resolveAnalysisLoadModel(model);
+    expect(activeCaseModel.nodalLoads).toHaveLength(1);
+    expect(activeCaseModel.nodalLoads[0]!.fx).toBe(10);
+
+    const comboModel = resolveAnalysisLoadModel({
+      ...model,
+      activeLoadCombinationId: 'combo1',
+    });
+    expect(comboModel.nodalLoads.map((load) => load.fx)).toEqual([12, 8]);
+
+    const result = analyzeFrame({ model: buildIndexedModel(comboModel) });
+    expect(result.reactions[0]).toBeCloseTo(-20, 8);
   });
 });
 
