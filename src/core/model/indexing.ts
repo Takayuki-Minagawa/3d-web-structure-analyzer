@@ -9,8 +9,8 @@ import type {
 } from './types';
 import { getAnalysisMode, getEffectiveRestraint } from './analysisMode';
 import {
-  getAxisAlignedRotationDofOffset,
-  getMemberTorsionRestraint,
+  collectTorsionRestraintSourceDofs,
+  formatUnsupportedTorsionRestraintMessage,
 } from './torsionRestraint';
 
 const RIGID: EndRelease = { type: 'rigid', kTheta: 0 };
@@ -90,7 +90,11 @@ export function buildIndexedModel(model: ProjectModel): IndexedModel {
   const nodeIdToIndex = new Map<NodeId, number>();
   const memberIdToIndex = new Map<MemberId, number>();
   const analysisMode = getAnalysisMode(model);
-  const extraFixedDofs: number[] = [];
+  const torsionDofs = collectTorsionRestraintSourceDofs(model);
+  if (torsionDofs.unsupportedMembers.length > 0) {
+    throw new Error(formatUnsupportedTorsionRestraintMessage(torsionDofs.unsupportedMembers[0]!.id));
+  }
+  const extraFixedDofs = torsionDofs.entries.map((entry) => entry.sourceDof);
 
   // Build spring lookup
   const springMap = new Map(
@@ -150,18 +154,6 @@ export function buildIndexedModel(model: ProjectModel): IndexedModel {
       resolveSpring(jSpr.y, springMap), // jy → DOF 10
       resolveSpring(jSpr.z, springMap), // jz → DOF 11
     ];
-
-    const torsionRestraint = getMemberTorsionRestraint(m);
-    if (torsionRestraint !== 'none') {
-      const offset = getAxisAlignedRotationDofOffset(dx, dy, dz, L);
-      if (offset === null) {
-        throw new Error(
-          `部材 ${m.id} の捻り拘束はグローバルX/Y/Z軸に平行な部材のみ対応しています。`
-        );
-      }
-      const restrainedNodeIndex = torsionRestraint === 'i' ? niIdx : njIdx;
-      extraFixedDofs.push(restrainedNodeIndex * 6 + offset);
-    }
 
     return {
       index: i,

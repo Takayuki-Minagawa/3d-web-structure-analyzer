@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildIndexedModel } from '../../core/model/indexing';
 import { validateModel } from '../../core/model/validation';
 import { analyzeFrame } from '../../core/analysis/analyzeFrame';
+import { partitionDofs } from '../../core/analysis/constraints';
 import type { ProjectModel, Restraint } from '../../core/model/types';
 
 const FREE: Restraint = { ux: false, uy: false, uz: false, rx: false, ry: false, rz: false };
@@ -338,6 +339,68 @@ describe('Member-end twist restraint', () => {
 
     const errors = validateModel(model);
     expect(errors.some((error) => error.message.includes('捻り拘束'))).toBe(true);
+  });
+
+  it('maps Y- and Z-axis member twist restraints to ry and rz', () => {
+    const model = createBaseModel();
+    model.nodes = [
+      { id: 'ny0', x: 0, y: 0, z: 0, restraint: FIXED },
+      { id: 'ny1', x: 0, y: 5, z: 0, restraint: FIXED },
+      { id: 'nz0', x: 10, y: 0, z: 0, restraint: FIXED },
+      { id: 'nz1', x: 10, y: 0, z: 5, restraint: FIXED },
+    ];
+    model.members = [
+      { ...defaultMember('my', 'ny0', 'ny1'), torsionRestraint: 'i' },
+      { ...defaultMember('mz', 'nz0', 'nz1'), torsionRestraint: 'j' },
+    ];
+
+    const indexed = buildIndexedModel(model);
+
+    expect(indexed.extraFixedDofs).toEqual([
+      4,  // ny0 ry
+      23, // nz1 rz
+    ]);
+  });
+
+  it('keeps X-Z mode auto-restraints idempotent with an explicit twist restraint', () => {
+    const model = createBaseModel();
+    model.analysisMode = 'xz2d';
+    model.nodes = [
+      { id: 'n0', x: 0, y: 0, z: 0, restraint: { ...FREE, ux: true, uz: true } },
+      { id: 'n1', x: 5, y: 0, z: 0, restraint: FREE },
+    ];
+    model.members = [
+      { ...defaultMember('m1', 'n0', 'n1'), torsionRestraint: 'i' },
+    ];
+
+    expect(validateModel(model)).toHaveLength(0);
+    const indexed = buildIndexedModel(model);
+    const { fixedDofs } = partitionDofs(indexed);
+
+    expect(indexed.extraFixedDofs).toEqual([3]);
+    expect(fixedDofs.filter((dof) => dof === 3)).toHaveLength(1);
+  });
+
+  it('propagates a slave-side twist restraint to the coupled master DOF', () => {
+    const model = createBaseModel();
+    model.nodes = [
+      { id: 'master', x: 0, y: 0, z: 0, restraint: FREE },
+      { id: 'slave', x: 0, y: 2, z: 0, restraint: FREE },
+      { id: 'fixed', x: 4, y: 2, z: 0, restraint: FIXED },
+    ];
+    model.members = [
+      { ...defaultMember('m1', 'slave', 'fixed'), torsionRestraint: 'i' },
+    ];
+    model.couplings = [
+      { id: 'c1', masterNodeId: 'master', slaveNodeId: 'slave', ux: false, uy: false, uz: false, rx: true, ry: false, rz: false },
+    ];
+
+    const indexed = buildIndexedModel(model);
+    const { freeDofs, fixedDofs } = partitionDofs(indexed);
+
+    expect(indexed.extraFixedDofs).toEqual([9]);
+    expect(fixedDofs).toContain(3);
+    expect(freeDofs).not.toContain(3);
   });
 });
 

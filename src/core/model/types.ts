@@ -61,7 +61,12 @@ export interface Member {
   codeAngle: number; // Rotation about member axis (degrees)
   iSprings: { x: number; y: number; z: number }; // Spring numbers at i-end
   jSprings: { x: number; y: number; z: number }; // Spring numbers at j-end
-  /** Extra support for member-axis twist at one end, used to stabilize pin-ended members. */
+  /**
+   * Fixes one global rotational DOF at the selected member end that corresponds
+   * to the member axis (rx/ry/rz for global X/Y/Z-aligned members).
+   * Because this is a node DOF restraint, it also affects other members sharing
+   * that node and rotation direction.
+   */
   torsionRestraint?: TorsionRestraintEnd;
 }
 

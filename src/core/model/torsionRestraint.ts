@@ -1,7 +1,15 @@
-import type { Member, ProjectModel, TorsionRestraintEnd } from './types';
+import type { Member, ProjectModel, StructuralNode, TorsionRestraintEnd } from './types';
 
 export const DEFAULT_TORSION_RESTRAINT: TorsionRestraintEnd = 'none';
 export const AXIS_ALIGNED_TOLERANCE = 1e-9;
+
+export interface TorsionRestraintSourceDof {
+  memberId: string;
+  nodeId: string;
+  nodeIndex: number;
+  dofOffset: number;
+  sourceDof: number;
+}
 
 export function normalizeTorsionRestraint(value: unknown): TorsionRestraintEnd {
   return value === 'i' || value === 'j' ? value : DEFAULT_TORSION_RESTRAINT;
@@ -37,14 +45,14 @@ export function getAxisAlignedRotationDofOffset(
   return null;
 }
 
-export function getMemberAxisRotationDofOffset(
-  model: ProjectModel,
-  member: Member
-): number | null {
-  const ni = model.nodes.find((node) => node.id === member.ni);
-  const nj = model.nodes.find((node) => node.id === member.nj);
-  if (!ni || !nj) return null;
+export function formatUnsupportedTorsionRestraintMessage(memberId: string): string {
+  return `部材 ${memberId} の捻り拘束はグローバルX/Y/Z軸に平行な部材のみ対応しています。`;
+}
 
+export function getMemberAxisRotationDofOffsetFromNodes(
+  ni: StructuralNode,
+  nj: StructuralNode
+): number | null {
   const dx = nj.x - ni.x;
   const dy = nj.y - ni.y;
   const dz = nj.z - ni.z;
@@ -52,31 +60,65 @@ export function getMemberAxisRotationDofOffset(
   return getAxisAlignedRotationDofOffset(dx, dy, dz, length);
 }
 
-export function findMembersWithUnsupportedTorsionRestraint(
-  model: ProjectModel
-): Member[] {
-  return model.members.filter((member) =>
-    getMemberTorsionRestraint(member) !== DEFAULT_TORSION_RESTRAINT &&
-    getMemberAxisRotationDofOffset(model, member) === null
-  );
+export function getMemberAxisRotationDofOffset(
+  model: ProjectModel,
+  member: Member
+): number | null {
+  const nodeById = new Map(model.nodes.map((node) => [node.id, node]));
+  const ni = nodeById.get(member.ni);
+  const nj = nodeById.get(member.nj);
+  if (!ni || !nj) return null;
+  return getMemberAxisRotationDofOffsetFromNodes(ni, nj);
 }
 
-export function getTorsionRestraintSourceDofs(model: ProjectModel): number[] {
+export function collectTorsionRestraintSourceDofs(model: ProjectModel): {
+  entries: TorsionRestraintSourceDof[];
+  unsupportedMembers: Member[];
+} {
+  const nodeById = new Map(model.nodes.map((node) => [node.id, node]));
   const nodeIdToIndex = new Map(model.nodes.map((node, index) => [node.id, index]));
-  const dofs: number[] = [];
+  const entries: TorsionRestraintSourceDof[] = [];
+  const unsupportedMembers: Member[] = [];
 
   for (const member of model.members) {
     const restraint = getMemberTorsionRestraint(member);
     if (restraint === DEFAULT_TORSION_RESTRAINT) continue;
 
-    const offset = getMemberAxisRotationDofOffset(model, member);
-    if (offset === null) continue;
+    const ni = nodeById.get(member.ni);
+    const nj = nodeById.get(member.nj);
+    if (!ni || !nj) continue;
+
+    const dofOffset = getMemberAxisRotationDofOffsetFromNodes(ni, nj);
+    if (dofOffset === null) {
+      unsupportedMembers.push(member);
+      continue;
+    }
 
     const nodeId = restraint === 'i' ? member.ni : member.nj;
     const nodeIndex = nodeIdToIndex.get(nodeId);
     if (nodeIndex === undefined) continue;
-    dofs.push(nodeIndex * 6 + offset);
+    entries.push({
+      memberId: member.id,
+      nodeId,
+      nodeIndex,
+      dofOffset,
+      sourceDof: nodeIndex * 6 + dofOffset,
+    });
   }
 
-  return dofs;
+  return { entries, unsupportedMembers };
+}
+
+export function findMembersWithUnsupportedTorsionRestraint(
+  model: ProjectModel
+): Member[] {
+  return collectTorsionRestraintSourceDofs(model).unsupportedMembers;
+}
+
+export function getTorsionRestraintSourceDofEntries(model: ProjectModel): TorsionRestraintSourceDof[] {
+  return collectTorsionRestraintSourceDofs(model).entries;
+}
+
+export function getTorsionRestraintSourceDofs(model: ProjectModel): number[] {
+  return getTorsionRestraintSourceDofEntries(model).map((entry) => entry.sourceDof);
 }

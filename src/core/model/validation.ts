@@ -6,7 +6,10 @@ import {
   getEffectiveRestraint,
   XZ_2D_MODE,
 } from './analysisMode';
-import { findMembersWithUnsupportedTorsionRestraint } from './torsionRestraint';
+import {
+  findMembersWithUnsupportedTorsionRestraint,
+  formatUnsupportedTorsionRestraintMessage,
+} from './torsionRestraint';
 
 const LOAD_TOLERANCE = 1e-9;
 
@@ -122,7 +125,7 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
   for (const member of unsupportedTorsionMembers) {
     errors.push({
       type: 'validation',
-      message: `部材 ${member.id} の捻り拘束はグローバルX/Y/Z軸に平行な部材のみ対応しています。`,
+      message: formatUnsupportedTorsionRestraintMessage(member.id),
       elementId: member.id,
     });
   }
