@@ -66,6 +66,10 @@ const ja = {
   'prop.loadIntensity': '強度:',
   'prop.loadMagnitude': '大きさ:',
   'prop.loadPosition': '位置 a:',
+  'prop.analysisMode': '解析モード',
+  'prop.analysisMode3d': '3Dフレーム',
+  'prop.analysisModeXz2d': '2Dフレーム（X-Z）',
+  'prop.yLockedXz2d': '2D X-ZモードではY座標は0固定です',
 
   // Property panel - display settings
   'prop.displaySettings': '表示設定',
@@ -225,6 +229,10 @@ const en: Record<keyof typeof ja, string> = {
   'prop.loadIntensity': 'Intensity:',
   'prop.loadMagnitude': 'Magnitude:',
   'prop.loadPosition': 'Pos. a:',
+  'prop.analysisMode': 'Analysis Mode',
+  'prop.analysisMode3d': '3D Frame',
+  'prop.analysisModeXz2d': '2D Frame (X-Z)',
+  'prop.yLockedXz2d': 'Y is fixed at 0 in 2D X-Z mode',
 
   'prop.displaySettings': 'Display Settings',
   'prop.nodeLabels': 'Node Labels',

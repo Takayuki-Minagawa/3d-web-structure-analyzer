@@ -202,6 +202,9 @@ export function convertFrameJson(
 
   return {
     title: doc.title || 'Imported Model',
+    // FrameJson is imported as a full 3D frame. Native ProjectFile JSON
+    // preserves analysisMode when users need xz2d round-tripping.
+    analysisMode: '3d',
     nodes,
     materials,
     sections,

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildIndexedModel } from '../../core/model/indexing';
+import { validateModel } from '../../core/model/validation';
 import { analyzeFrame } from '../../core/analysis/analyzeFrame';
 import type { ProjectModel, Restraint } from '../../core/model/types';
 
@@ -145,6 +146,102 @@ describe('3D Axial member', () => {
     const delta = (F * L) / (E * A);
     // Node 1 ux at DOF 6*1 + 0 = 6
     expect(result.displacements[6]).toBeCloseTo(delta, 8);
+  });
+});
+
+describe('2D X-Z frame analysis mode', () => {
+  const P = -10;
+  const L = 4;
+  const E = 200e6;
+  const Iy = 8.333e-6;
+  const nu = 0.3;
+  const G = E / (2 * (1 + nu));
+  const A = 0.01;
+
+  function buildModel(): ProjectModel {
+    const model = createBaseModel();
+    model.analysisMode = 'xz2d';
+    model.nodes = [
+      {
+        id: 'n0',
+        x: 0,
+        y: 0,
+        z: 0,
+        restraint: { ...FREE, ux: true, uz: true, ry: true },
+      },
+      { id: 'n1', x: L, y: 0, z: 0, restraint: FREE },
+    ];
+    model.members = [defaultMember('m1', 'n0', 'n1')];
+    model.nodalLoads = [
+      { id: 'nl1', nodeId: 'n1', fx: 0, fy: 0, fz: P, mx: 0, my: 0, mz: 0 },
+    ];
+    return model;
+  }
+
+  it('auto-restrains out-of-plane DOFs while leaving X-Z frame DOFs active', () => {
+    const model = buildModel();
+    expect(validateModel(model)).toHaveLength(0);
+
+    const indexed = buildIndexedModel(model);
+    expect(indexed.nodes[1]!.restraint.uy).toBe(true);
+    expect(indexed.nodes[1]!.restraint.rx).toBe(true);
+    expect(indexed.nodes[1]!.restraint.rz).toBe(true);
+    expect(indexed.nodes[1]!.restraint.uz).toBe(false);
+    expect(indexed.nodes[1]!.restraint.ry).toBe(false);
+
+    const result = analyzeFrame({ model: indexed });
+    const ky = 0.5;
+    const Asy = ky * A;
+    const delta = (P * L * L * L) / (3 * E * Iy) + (P * L) / (G * Asy);
+
+    expect(result.displacements[7]).toBeCloseTo(0, 8);  // uy
+    expect(result.displacements[9]).toBeCloseTo(0, 8);  // rx
+    expect(result.displacements[11]).toBeCloseTo(0, 8); // rz
+    expect(result.displacements[8]).toBeCloseTo(delta, 4); // uz remains active
+  });
+
+  it('rejects X-Z 2D analysis when any node has nonzero Y', () => {
+    const model = buildModel();
+    model.nodes[1] = { ...model.nodes[1]!, y: 0.25 };
+
+    const errors = validateModel(model);
+    expect(errors.some((error) => error.message.includes('Y座標が0'))).toBe(true);
+  });
+
+  it('rejects unsupported member code angles in X-Z 2D mode', () => {
+    const model = buildModel();
+    model.members[0] = { ...model.members[0]!, codeAngle: 90 };
+
+    const errors = validateModel(model);
+    expect(errors.some((error) => error.message.includes('コード角'))).toBe(true);
+  });
+
+  it('rejects out-of-plane nodal load components in X-Z 2D mode', () => {
+    const model = buildModel();
+    model.nodalLoads[0] = { ...model.nodalLoads[0]!, fy: 1, mx: 2, mz: 3 };
+
+    const errors = validateModel(model);
+    expect(errors.some((error) => error.message.includes('面外成分'))).toBe(true);
+  });
+
+  it('rejects out-of-plane member load components in X-Z 2D mode', () => {
+    const model = buildModel();
+    model.nodalLoads = [];
+    model.memberLoads = [
+      { id: 'ml1', memberId: 'm1', type: 'udl', direction: 'localY', value: -1 },
+      {
+        id: 'cmq1',
+        memberId: 'm1',
+        type: 'cmq',
+        iQx: 0, iQy: 1, iQz: 0, iMy: 0, iMz: 2,
+        jQx: 0, jQy: 0, jQz: 0, jMy: 0, jMz: 0,
+        moy: 0, moz: 3,
+      },
+    ];
+
+    const errors = validateModel(model);
+    expect(errors.some((error) => error.message.includes('localY'))).toBe(true);
+    expect(errors.some((error) => error.message.includes('CMQ'))).toBe(true);
   });
 });
 

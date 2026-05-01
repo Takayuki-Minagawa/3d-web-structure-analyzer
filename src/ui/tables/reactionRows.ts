@@ -1,4 +1,5 @@
 import type { ProjectModel } from '../../core/model/types';
+import { getAnalysisMode, getEffectiveRestraint } from '../../core/model/analysisMode';
 
 export type ReactionCell = {
   value: number | null;
@@ -18,6 +19,7 @@ export function buildEffectiveReactionRows(
   const nodeIdToIndex = new Map(model.nodes.map((n, i) => [n.id, i]));
   const nodeCount = model.nodes.length;
   const dofCount = nodeCount * 6;
+  const analysisMode = getAnalysisMode(model);
 
   // Build DOF map (same logic as indexing.ts)
   const dofMap = new Int32Array(dofCount);
@@ -38,7 +40,7 @@ export function buildEffectiveReactionRows(
 
   const constrainedSourceDofs = new Uint8Array(dofCount);
   for (let i = 0; i < model.nodes.length; i++) {
-    const r = model.nodes[i]!.restraint;
+    const r = getEffectiveRestraint(model.nodes[i]!.restraint, analysisMode);
     const flags = [r.ux, r.uy, r.uz, r.rx, r.ry, r.rz];
     for (let d = 0; d < 6; d++) {
       if (flags[d]) constrainedSourceDofs[i * 6 + d] = 1;

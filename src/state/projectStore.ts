@@ -11,10 +11,18 @@ import type {
   DiagramPoint,
   AnalysisError,
   Restraint,
+  AnalysisMode,
 } from '../core/model/types';
 import type { WorkerResponse } from '../worker/protocol';
 import { parseFrameJsonText, isFrameJsonFormat } from '../io/frameJsonParser';
 import { convertFrameJson } from '../io/frameJsonConverter';
+import {
+  DEFAULT_ANALYSIS_MODE,
+  XZ_2D_MODE,
+  findNodesOffXzPlane,
+  getAnalysisMode,
+  isXz2dMode,
+} from '../core/model/analysisMode';
 
 /** Distributive Omit that works correctly with union types */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
@@ -28,10 +36,31 @@ const DEFAULT_RESTRAINT: Restraint = {
   rx: false, ry: false, rz: false,
 };
 
+export type AnalysisModeUpdateResult =
+  | { ok: true }
+  | { ok: false; error: string; nodeIds: string[] };
+
+function normalizeProjectModel(model: ProjectModel): ProjectModel {
+  // Idempotently fills defaults for older persisted/imported project files.
+  return {
+    ...model,
+    analysisMode: model.analysisMode ?? DEFAULT_ANALYSIS_MODE,
+    springs: model.springs ?? [],
+    couplings: model.couplings ?? [],
+    nodalLoads: model.nodalLoads ?? [],
+    memberLoads: model.memberLoads ?? [],
+  };
+}
+
+function formatOffPlaneError(nodeIds: string[]): string {
+  return `2D X-Z平面モードに切り替えるには、すべての節点のY座標を0にしてください。対象節点: ${nodeIds.join(', ')}`;
+}
+
 function createDefaultModel(): ProjectModel {
   const matId = generateId();
   return {
     title: '',
+    analysisMode: DEFAULT_ANALYSIS_MODE,
     nodes: [],
     materials: [
       { id: matId, name: 'Steel', E: 20500, G: 7900, nu: 0.3, expansion: 0.000012 },
@@ -102,6 +131,7 @@ interface ProjectState {
   setAnalyzing: (v: boolean) => void;
   setAnalysisResult: (resp: WorkerResponse) => void;
   markResultStale: () => void;
+  setAnalysisMode: (mode: AnalysisMode) => AnalysisModeUpdateResult;
 
   // Project
   loadModel: (model: ProjectModel) => void;
@@ -126,7 +156,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set((s) => ({
       model: {
         ...s.model,
-        nodes: [...s.model.nodes, { id, x, y, z, restraint: { ...DEFAULT_RESTRAINT } }],
+        nodes: [
+          ...s.model.nodes,
+          { id, x, y: isXz2dMode(s.model) ? 0 : y, z, restraint: { ...DEFAULT_RESTRAINT } },
+        ],
       },
       isResultStale: true,
     }));
@@ -138,7 +171,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       model: {
         ...s.model,
         nodes: s.model.nodes.map((n) =>
-          n.id === id ? { ...n, ...updates } : n
+          n.id === id
+            ? { ...n, ...updates, ...(isXz2dMode(s.model) ? { y: 0 } : {}) }
+            : n
         ),
       },
       isResultStale: true,
@@ -400,8 +435,26 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   markResultStale: () => set({ isResultStale: true }),
 
+  setAnalysisMode: (mode) => {
+    if (mode === XZ_2D_MODE) {
+      const offPlaneNodes = findNodesOffXzPlane(get().model);
+      if (offPlaneNodes.length > 0) {
+        const nodeIds = offPlaneNodes.map((node) => node.id);
+        return { ok: false, error: formatOffPlaneError(nodeIds), nodeIds };
+      }
+    }
+
+    if (getAnalysisMode(get().model) === mode) return { ok: true };
+
+    set((s) => ({
+      model: { ...s.model, analysisMode: mode },
+      isResultStale: true,
+    }));
+    return { ok: true };
+  },
+
   loadModel: (model) => set((s) => ({
-    model,
+    model: normalizeProjectModel(model),
     analysisResult: null,
     analysisError: null,
     isResultStale: false,
@@ -412,7 +465,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const doc = parseFrameJsonText(text);
     const model = convertFrameJson(doc, loadCaseIndex);
     set((s) => ({
-      model,
+      model: normalizeProjectModel(model),
       analysisResult: null,
       analysisError: null,
       isResultStale: false,
@@ -432,7 +485,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const doc = parseFrameJsonText(text);
       const model = convertFrameJson(doc);
       set((s) => ({
-        model,
+        model: normalizeProjectModel(model),
         analysisResult: null,
         analysisError: null,
         isResultStale: false,
@@ -442,7 +495,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const pf = parsed as { model?: ProjectModel };
       if (pf.model) {
         set((s) => ({
-          model: pf.model!,
+          model: normalizeProjectModel(pf.model!),
           analysisResult: null,
           analysisError: null,
           isResultStale: false,

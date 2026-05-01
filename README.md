@@ -40,12 +40,14 @@ npm test
 - 断面特性の設定（名称・断面積 A・ねじり定数 Ix・断面二次モーメント Iy, Iz・せん断面積比 ky, kz）
 - 部材端バネ（剛・ピン・回転バネ）の設定と静的縮約
 - 同一変位カップリング（master-slave DOF マッピング）
+- 2Dフレーム解析モード（X-Z平面、uy/rx/rz を自動拘束、全節点 Y=0 を検証）
 - 部材コード角の設定
 - 節点荷重（Fx, Fy, Fz, Mx, My, Mz）
 - 部材荷重（集中荷重・等分布荷重・CMQ荷重）
 
 ### インポート / エクスポート
 - FrameModelMaker-Web 形式（FrameJsonDocument）のインポート
+- FrameModelMaker-Web 形式は3Dモデルとして読み込み（2DモードはProjectFile JSONで保存/復元）
 - JSON形式のエクスポート / インポート
 - サンプルモデル読込
 - IndexedDBオートセーブ

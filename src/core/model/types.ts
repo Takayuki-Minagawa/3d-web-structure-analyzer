@@ -4,6 +4,7 @@ export type MemberId = string;
 export type MaterialId = string;
 export type SectionId = string;
 export type SpringId = string;
+export type AnalysisMode = '3d' | 'xz2d';
 
 // ── Model entities ──
 export interface Restraint {
@@ -131,6 +132,7 @@ export interface CouplingConstraint {
 // ── Project model ──
 export interface ProjectModel {
   title: string;
+  analysisMode?: AnalysisMode;
   nodes: StructuralNode[];
   materials: Material[];
   sections: Section[];

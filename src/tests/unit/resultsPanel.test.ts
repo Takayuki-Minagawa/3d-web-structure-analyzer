@@ -50,4 +50,37 @@ describe('buildEffectiveReactionRows', () => {
       isRepresentative: false,
     });
   });
+
+  it('shows auto-fixed out-of-plane reactions in X-Z 2D mode', () => {
+    const model = createBaseModel();
+    model.analysisMode = 'xz2d';
+    model.nodes = [
+      { id: 'free2d', x: 0, y: 0, z: 0, restraint: FREE },
+    ];
+
+    const reactions = new Array(model.nodes.length * 6).fill(0);
+    reactions[1] = 1.1; // uy
+    reactions[3] = 3.3; // rx
+    reactions[5] = 5.5; // rz
+
+    const { rows, hasSharedReactions } = buildEffectiveReactionRows(model, reactions);
+
+    expect(hasSharedReactions).toBe(false);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.cells[1]).toEqual({
+      value: 1.1,
+      isShared: false,
+      isRepresentative: true,
+    });
+    expect(rows[0]!.cells[3]).toEqual({
+      value: 3.3,
+      isShared: false,
+      isRepresentative: true,
+    });
+    expect(rows[0]!.cells[5]).toEqual({
+      value: 5.5,
+      isShared: false,
+      isRepresentative: true,
+    });
+  });
 });

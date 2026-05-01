@@ -1,7 +1,42 @@
 import type { ProjectModel, AnalysisError } from './types';
+import {
+  findNodesOffXzPlane,
+  findMembersWithUnsupportedXz2dOrientation,
+  getAnalysisMode,
+  getEffectiveRestraint,
+  XZ_2D_MODE,
+} from './analysisMode';
+
+const LOAD_TOLERANCE = 1e-9;
+
+function isNonzero(value: number): boolean {
+  return Math.abs(value) > LOAD_TOLERANCE;
+}
 
 export function validateModel(model: ProjectModel): AnalysisError[] {
   const errors: AnalysisError[] = [];
+  const analysisMode = getAnalysisMode(model);
+  const isXz2d = analysisMode === XZ_2D_MODE;
+
+  if (isXz2d) {
+    const offPlaneNodes = findNodesOffXzPlane(model);
+    if (offPlaneNodes.length > 0) {
+      errors.push({
+        type: 'validation',
+        message: `2D X-Z平面モードでは全節点のY座標が0である必要があります。対象節点: ${offPlaneNodes.map((n) => n.id).join(', ')}`,
+        nodeId: offPlaneNodes[0]!.id,
+      });
+    }
+
+    const unsupportedMembers = findMembersWithUnsupportedXz2dOrientation(model);
+    if (unsupportedMembers.length > 0) {
+      errors.push({
+        type: 'validation',
+        message: `2D X-Z平面モードでは部材コード角を0度または180度系にしてください。対象部材: ${unsupportedMembers.map((m) => m.id).join(', ')}`,
+        elementId: unsupportedMembers[0]!.id,
+      });
+    }
+  }
 
   // Check: at least one node
   if (model.nodes.length === 0) {
@@ -128,9 +163,12 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
   }
 
   // Check: constraint sufficiency (3 translational directions)
-  const hasUx = model.nodes.some((n) => n.restraint.ux);
-  const hasUy = model.nodes.some((n) => n.restraint.uy);
-  const hasUz = model.nodes.some((n) => n.restraint.uz);
+  const effectiveRestraints = model.nodes.map((n) =>
+    getEffectiveRestraint(n.restraint, analysisMode)
+  );
+  const hasUx = effectiveRestraints.some((r) => r.ux);
+  const hasUy = effectiveRestraints.some((r) => r.uy);
+  const hasUz = effectiveRestraints.some((r) => r.uz);
   if (!hasUx || !hasUy || !hasUz) {
     errors.push({
       type: 'validation',
@@ -165,6 +203,33 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
         elementId: ml.id,
       });
     }
+    if (isXz2d) {
+      if ((ml.type === 'point' || ml.type === 'udl') &&
+          ml.direction === 'localY' &&
+          isNonzero(ml.value)) {
+        errors.push({
+          type: 'validation',
+          message: `2D X-Z平面モードでは部材荷重 ${ml.id} の localY 方向荷重は使用できません。localX または localZ を使用してください。`,
+          elementId: ml.id,
+        });
+      }
+      if (ml.type === 'cmq') {
+        const invalid = [
+          ['iQy', ml.iQy],
+          ['jQy', ml.jQy],
+          ['iMz', ml.iMz],
+          ['jMz', ml.jMz],
+          ['moz', ml.moz],
+        ].filter(([, value]) => isNonzero(value as number));
+        if (invalid.length > 0) {
+          errors.push({
+            type: 'validation',
+            message: `2D X-Z平面モードではCMQ荷重 ${ml.id} の面外成分 (${invalid.map(([name]) => name).join(', ')}) は使用できません。`,
+            elementId: ml.id,
+          });
+        }
+      }
+    }
   }
 
   // Check: nodal loads
@@ -175,6 +240,20 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
         message: `節点荷重 ${nl.id} の対象節点 ${nl.nodeId} が見つかりません。`,
         nodeId: nl.nodeId,
       });
+    }
+    if (isXz2d) {
+      const invalid = [
+        ['fy', nl.fy],
+        ['mx', nl.mx],
+        ['mz', nl.mz],
+      ].filter(([, value]) => isNonzero(value as number));
+      if (invalid.length > 0) {
+        errors.push({
+          type: 'validation',
+          message: `2D X-Z平面モードでは節点荷重 ${nl.id} の面外成分 (${invalid.map(([name]) => name).join(', ')}) は使用できません。fx, fz, my を使用してください。`,
+          nodeId: nl.nodeId,
+        });
+      }
     }
   }
 

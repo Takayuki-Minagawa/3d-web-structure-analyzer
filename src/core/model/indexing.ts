@@ -7,6 +7,7 @@ import type {
   NodeId,
   MemberId,
 } from './types';
+import { getAnalysisMode, getEffectiveRestraint } from './analysisMode';
 
 const RIGID: EndRelease = { type: 'rigid', kTheta: 0 };
 const PIN: EndRelease = { type: 'pin', kTheta: 0 };
@@ -84,6 +85,7 @@ function resolveSpring(
 export function buildIndexedModel(model: ProjectModel): IndexedModel {
   const nodeIdToIndex = new Map<NodeId, number>();
   const memberIdToIndex = new Map<MemberId, number>();
+  const analysisMode = getAnalysisMode(model);
 
   // Build spring lookup
   const springMap = new Map(
@@ -98,7 +100,7 @@ export function buildIndexedModel(model: ProjectModel): IndexedModel {
       x: n.x,
       y: n.y,
       z: n.z,
-      restraint: { ...n.restraint },
+      restraint: getEffectiveRestraint(n.restraint, analysisMode),
     };
   });
 

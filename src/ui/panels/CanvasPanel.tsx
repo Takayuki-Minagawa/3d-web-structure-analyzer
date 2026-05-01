@@ -4,6 +4,7 @@ import type { EditAction } from '../../rendering/threeApp';
 import { useProjectStore } from '../../state/projectStore';
 import { useViewStore } from '../../state/viewStore';
 import { useSelectionStore } from '../../state/selectionStore';
+import { isXz2dMode } from '../../core/model/analysisMode';
 
 const FIXED_RESTRAINT = { ux: true, uy: true, uz: true, rx: true, ry: true, rz: true };
 const FREE_RESTRAINT = { ux: false, uy: false, uz: false, rx: false, ry: false, rz: false };
@@ -63,10 +64,13 @@ export const CanvasPanel: React.FC = () => {
         addNodalLoad({ nodeId: action.nodeId, fx: 0, fy: 0, fz: -10, mx: 0, my: 0, mz: 0 });
         selectNode(action.nodeId);
         break;
-      case 'addMemberLoad':
-        addMemberLoad({ memberId: action.memberId, type: 'udl', direction: 'localY', value: -5 });
+      case 'addMemberLoad': {
+        const currentModel = useProjectStore.getState().model;
+        const direction = isXz2dMode(currentModel) ? 'localZ' : 'localY';
+        addMemberLoad({ memberId: action.memberId, type: 'udl', direction, value: -5 });
         selectMember(action.memberId);
         break;
+      }
       case 'moveNode':
         updateNode(action.nodeId, { x: action.x, y: action.y, z: action.z });
         break;

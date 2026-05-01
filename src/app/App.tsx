@@ -131,6 +131,7 @@ export const App: React.FC = () => {
     // Fallback: simple 3D portal frame
     const sampleModel = {
       title: 'Simple 3D Portal Frame',
+      analysisMode: '3d' as const,
       nodes: [
         { id: 'n1', x: 0, y: 0, z: 0, restraint: { ux: true, uy: true, uz: true, rx: true, ry: true, rz: true } },
         { id: 'n2', x: 0, y: 0, z: 400, restraint: { ux: false, uy: false, uz: false, rx: false, ry: false, rz: false } },

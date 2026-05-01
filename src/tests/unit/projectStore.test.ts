@@ -8,6 +8,7 @@ describe('projectStore basic operations', () => {
 
   it('creates default model with 3D properties', () => {
     const model = useProjectStore.getState().model;
+    expect(model.analysisMode).toBe('3d');
     expect(model.materials.length).toBeGreaterThan(0);
     expect(model.sections.length).toBeGreaterThan(0);
     expect(model.materials[0]!.G).toBeGreaterThan(0);
@@ -37,6 +38,47 @@ describe('projectStore basic operations', () => {
     expect(member).toBeDefined();
     expect(member!.codeAngle).toBe(0);
     expect(member!.iSprings).toEqual({ x: 0, y: 0, z: 0 });
+  });
+
+  it('rejects 2D X-Z mode when nodes are off the X-Z plane', () => {
+    const state = useProjectStore.getState();
+    state.addNode(0, 1, 0);
+
+    const result = useProjectStore.getState().setAnalysisMode('xz2d');
+    expect(result.ok).toBe(false);
+    expect(useProjectStore.getState().model.analysisMode).toBe('3d');
+  });
+
+  it('keeps node Y at zero while 2D X-Z mode is active', () => {
+    const state = useProjectStore.getState();
+    const id = state.addNode(0, 0, 0);
+
+    const result = useProjectStore.getState().setAnalysisMode('xz2d');
+    expect(result.ok).toBe(true);
+
+    useProjectStore.getState().updateNode(id, { y: 3 });
+    expect(useProjectStore.getState().model.nodes[0]!.y).toBe(0);
+
+    const id2 = useProjectStore.getState().addNode(1, 5, 2);
+    const added = useProjectStore.getState().model.nodes.find(n => n.id === id2);
+    expect(added!.y).toBe(0);
+  });
+
+  it('preserves user restraint values when toggling back from 2D X-Z to 3D', () => {
+    const state = useProjectStore.getState();
+    const id = state.addNode(0, 0, 0);
+
+    let result = useProjectStore.getState().setAnalysisMode('xz2d');
+    expect(result.ok).toBe(true);
+    expect(useProjectStore.getState().model.nodes.find(n => n.id === id)!.restraint.uy).toBe(false);
+    expect(useProjectStore.getState().model.nodes.find(n => n.id === id)!.restraint.rx).toBe(false);
+    expect(useProjectStore.getState().model.nodes.find(n => n.id === id)!.restraint.rz).toBe(false);
+
+    result = useProjectStore.getState().setAnalysisMode('3d');
+    expect(result.ok).toBe(true);
+    expect(useProjectStore.getState().model.nodes.find(n => n.id === id)!.restraint.uy).toBe(false);
+    expect(useProjectStore.getState().model.nodes.find(n => n.id === id)!.restraint.rx).toBe(false);
+    expect(useProjectStore.getState().model.nodes.find(n => n.id === id)!.restraint.rz).toBe(false);
   });
 
   it('imports FrameJson format', () => {

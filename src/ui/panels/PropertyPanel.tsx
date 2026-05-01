@@ -3,7 +3,12 @@ import { useProjectStore } from '../../state/projectStore';
 import { useSelectionStore } from '../../state/selectionStore';
 import { useViewStore } from '../../state/viewStore';
 import { useT } from '../../i18n';
-import type { StructuralNode, Member, NodalLoad, MemberLoad } from '../../core/model/types';
+import type { StructuralNode, Member, NodalLoad, MemberLoad, AnalysisMode } from '../../core/model/types';
+import {
+  findNodesOffXzPlane,
+  getAnalysisMode,
+  XZ_2D_MODE,
+} from '../../core/model/analysisMode';
 
 /** Distributive Omit that works correctly with union types */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
@@ -41,14 +46,17 @@ export const PropertyPanel: React.FC = () => {
 
   const selectedNodes = model.nodes.filter((n) => selectedNodeIds.has(n.id));
   const selectedMembers = model.members.filter((m) => selectedMemberIds.has(m.id));
+  const analysisMode = getAnalysisMode(model);
 
   return (
     <div className="property-panel">
       <h3>{t('prop.title')}</h3>
+      <AnalysisModeEditor />
 
       {selectedNodes.length === 1 && (
         <NodeProperties
           node={selectedNodes[0]!}
+          analysisMode={analysisMode}
           nodalLoads={model.nodalLoads.filter((l) => l.nodeId === selectedNodes[0]!.id)}
           onUpdate={updateNode}
           onDelete={removeNode}
@@ -61,12 +69,18 @@ export const PropertyPanel: React.FC = () => {
       {selectedMembers.length === 1 && (
         <MemberProperties
           member={selectedMembers[0]!}
+          analysisMode={analysisMode}
           model={model}
           memberLoads={model.memberLoads.filter((l) => l.memberId === selectedMembers[0]!.id)}
           onUpdate={updateMember}
           onDelete={removeMember}
           onAddLoad={(memberId) =>
-            addMemberLoad({ memberId, type: 'udl', direction: 'localY', value: -5 })
+            addMemberLoad({
+              memberId,
+              type: 'udl',
+              direction: analysisMode === XZ_2D_MODE ? 'localZ' : 'localY',
+              value: -5,
+            })
           }
           onUpdateLoad={updateMemberLoad}
           onRemoveLoad={removeMemberLoad}
@@ -115,13 +129,14 @@ export const PropertyPanel: React.FC = () => {
 
 const NodeProperties: React.FC<{
   node: StructuralNode;
+  analysisMode: AnalysisMode;
   nodalLoads: NodalLoad[];
   onUpdate: (id: string, u: Partial<Pick<StructuralNode, 'x' | 'y' | 'z' | 'restraint'>>) => void;
   onDelete: (id: string) => void;
   onAddLoad: (nodeId: string) => void;
   onUpdateLoad: (id: string, updates: Partial<Omit<NodalLoad, 'id'>>) => void;
   onRemoveLoad: (id: string) => void;
-}> = ({ node, nodalLoads, onUpdate, onDelete, onAddLoad, onUpdateLoad, onRemoveLoad }) => {
+}> = ({ node, analysisMode, nodalLoads, onUpdate, onDelete, onAddLoad, onUpdateLoad, onRemoveLoad }) => {
   const t = useT();
   const restraintKeys = ['ux', 'uy', 'uz', 'rx', 'ry', 'rz'] as const;
   const restraintLabels = {
@@ -132,13 +147,18 @@ const NodeProperties: React.FC<{
   return (
     <div className="prop-group">
       <div className="prop-title">{t('prop.node')} {node.id.substring(0, 5)}</div>
-      {(['x', 'y', 'z'] as const).map((axis) => (
-        <div className="prop-row" key={axis}>
-          <label>{axis.toUpperCase()}:</label>
-          <input type="number" value={node[axis]} step="1"
-            onChange={(e) => onUpdate(node.id, { [axis]: Number(e.target.value) })} />
-        </div>
-      ))}
+      {(['x', 'y', 'z'] as const).map((axis) => {
+        const yLocked = analysisMode === XZ_2D_MODE && axis === 'y';
+        return (
+          <div className="prop-row" key={axis}>
+            <label>{axis.toUpperCase()}:</label>
+            <input type="number" value={node[axis]} step="1"
+              disabled={yLocked}
+              title={yLocked ? t('prop.yLockedXz2d') : undefined}
+              onChange={(e) => onUpdate(node.id, { [axis]: Number(e.target.value) })} />
+          </div>
+        );
+      })}
       <div className="prop-title">{t('prop.restraints')}</div>
       {restraintKeys.map((key) => (
         <label className="checkbox-label" key={key}>
@@ -169,8 +189,43 @@ const NodeProperties: React.FC<{
   );
 };
 
+const AnalysisModeEditor: React.FC = () => {
+  const model = useProjectStore((s) => s.model);
+  const setAnalysisMode = useProjectStore((s) => s.setAnalysisMode);
+  const [error, setError] = React.useState<string | null>(null);
+  const t = useT();
+  const mode = getAnalysisMode(model);
+
+  React.useEffect(() => {
+    if (error && findNodesOffXzPlane(model).length === 0) {
+      setError(null);
+    }
+  }, [error, model]);
+
+  return (
+    <div className="prop-group">
+      <div className="prop-title">{t('prop.analysisMode')}</div>
+      <div className="prop-row">
+        <select
+          aria-label={t('prop.analysisMode')}
+          value={mode}
+          onChange={(e) => {
+            const result = setAnalysisMode(e.target.value as AnalysisMode);
+            setError(result.ok ? null : result.error);
+          }}
+        >
+          <option value="3d">{t('prop.analysisMode3d')}</option>
+          <option value="xz2d">{t('prop.analysisModeXz2d')}</option>
+        </select>
+      </div>
+      {error && <div className="error-text">{error}</div>}
+    </div>
+  );
+};
+
 const MemberProperties: React.FC<{
   member: Member;
+  analysisMode: AnalysisMode;
   model: import('../../core/model/types').ProjectModel;
   memberLoads: MemberLoad[];
   onUpdate: (id: string, u: Partial<Pick<Member, 'sectionId' | 'codeAngle'>>) => void;
@@ -178,7 +233,7 @@ const MemberProperties: React.FC<{
   onAddLoad: (memberId: string) => void;
   onUpdateLoad: (id: string, updates: Partial<DistributiveOmit<MemberLoad, 'id'>>) => void;
   onRemoveLoad: (id: string) => void;
-}> = ({ member, model, memberLoads, onUpdate, onDelete, onAddLoad, onUpdateLoad, onRemoveLoad }) => {
+}> = ({ member, analysisMode, model, memberLoads, onUpdate, onDelete, onAddLoad, onUpdateLoad, onRemoveLoad }) => {
   const t = useT();
   const ni = model.nodes.find((n) => n.id === member.ni);
   const nj = model.nodes.find((n) => n.id === member.nj);
@@ -244,7 +299,7 @@ const MemberProperties: React.FC<{
                   <label>{t('prop.loadDirection')}</label>
                   <select value={load.direction}
                     onChange={(e) => onUpdateLoad(load.id, { direction: e.target.value as 'localX' | 'localY' | 'localZ' })}>
-                    <option value="localY">localY</option>
+                    <option value="localY" disabled={analysisMode === XZ_2D_MODE}>localY</option>
                     <option value="localZ">localZ</option>
                     <option value="localX">localX</option>
                   </select>
