@@ -8,8 +8,8 @@ import type {
   NodalLoad,
   MemberLoad,
   CouplingConstraint,
-  DiagramPoint,
   AnalysisError,
+  AnalysisResult,
   Restraint,
   AnalysisMode,
   LoadCase,
@@ -126,14 +126,6 @@ function createDefaultModel(): ProjectModel {
     memberLoads: [],
     units: { force: 'kN', length: 'cm', moment: 'kN·cm' },
   };
-}
-
-export interface AnalysisResult {
-  displacements: number[];
-  reactions: number[];
-  elementEndForces: Record<string, number[]>;
-  diagrams: Record<string, { memberId: string; points: DiagramPoint[] }>;
-  warnings: string[];
 }
 
 interface ProjectState {

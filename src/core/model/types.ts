@@ -274,6 +274,14 @@ export interface AnalysisOutput {
   warnings: string[];
 }
 
+export interface AnalysisResult {
+  displacements: number[];
+  reactions: number[];
+  elementEndForces: Record<string, number[]>;
+  diagrams: Record<string, { memberId: string; points: DiagramPoint[] }>;
+  warnings: string[];
+}
+
 export type DofName = 'ux' | 'uy' | 'uz' | 'rx' | 'ry' | 'rz';
 export type ReleasedMemberMode = 'localXTwist' | 'localYBending' | 'localZBending';
 

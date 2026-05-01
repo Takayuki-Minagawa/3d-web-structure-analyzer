@@ -6,8 +6,12 @@ const ja = {
   'app.loadSample': 'サンプル読込',
   'app.import': 'JSON読込',
   'app.export': 'JSON保存',
+  'app.reportMd': 'MDレポート',
+  'app.reportCsv': 'CSVレポート',
+  'app.reportPdf': 'PDF印刷',
   'app.new': '新規',
   'app.importError': 'JSONファイルの読み込みに失敗しました。',
+  'app.popupBlocked': 'レポート印刷用ウィンドウを開けませんでした。ポップアップ許可を確認してください。',
   'app.help': 'ヘルプ',
 
   // Theme
@@ -210,8 +214,12 @@ const en: Record<keyof typeof ja, string> = {
   'app.loadSample': 'Load Sample',
   'app.import': 'Import JSON',
   'app.export': 'Export JSON',
+  'app.reportMd': 'Report MD',
+  'app.reportCsv': 'Report CSV',
+  'app.reportPdf': 'Print PDF',
   'app.new': 'New',
   'app.importError': 'Failed to load JSON file.',
+  'app.popupBlocked': 'Could not open the report print window. Check popup permissions.',
   'app.help': 'Help',
 
   'theme.light': 'Light',

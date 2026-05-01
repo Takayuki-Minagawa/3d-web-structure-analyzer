@@ -11,6 +11,11 @@ import { useT, useI18nStore } from '../i18n';
 import type { WorkerResponse } from '../worker/protocol';
 import type { ProjectFile } from '../core/model/types';
 import { saveProject, loadProject } from '../persistence/indexedDb';
+import {
+  generateCsvReport,
+  generateMarkdownReport,
+  generatePrintableReportHtml,
+} from '../io/reportExporter';
 
 export const App: React.FC = () => {
   const workerRef = useRef<Worker | null>(null);
@@ -24,6 +29,8 @@ export const App: React.FC = () => {
   const toggleTheme = useViewStore((s) => s.toggleTheme);
 
   const model = useProjectStore((s) => s.model);
+  const analysisResult = useProjectStore((s) => s.analysisResult);
+  const analysisError = useProjectStore((s) => s.analysisError);
   const setAnalyzing = useProjectStore((s) => s.setAnalyzing);
   const setAnalysisResult = useProjectStore((s) => s.setAnalysisResult);
   const isAnalyzing = useProjectStore((s) => s.isAnalyzing);
@@ -93,6 +100,44 @@ export const App: React.FC = () => {
     a.click();
     URL.revokeObjectURL(url);
   }, [model]);
+
+  const reportInput = useCallback(() => ({
+    model,
+    result: analysisResult,
+    error: analysisError,
+    generatedAt: new Date(),
+  }), [model, analysisResult, analysisError]);
+
+  const handleExportMarkdownReport = useCallback(() => {
+    downloadText('frame-analysis-report.md', generateMarkdownReport(reportInput()), 'text/markdown');
+  }, [reportInput]);
+
+  const handleExportCsvReport = useCallback(() => {
+    downloadText('frame-analysis-report.csv', generateCsvReport(reportInput()), 'text/csv');
+  }, [reportInput]);
+
+  const handlePrintReport = useCallback(() => {
+    const html = generatePrintableReportHtml(reportInput());
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, '_blank');
+    if (!win) {
+      URL.revokeObjectURL(url);
+      alert(t('app.popupBlocked'));
+      return;
+    }
+    let revoked = false;
+    const revokeUrl = () => {
+      if (revoked) return;
+      URL.revokeObjectURL(url);
+      revoked = true;
+    };
+    win.addEventListener('load', () => {
+      win.print();
+      revokeUrl();
+    }, { once: true });
+    win.addEventListener('beforeunload', revokeUrl, { once: true });
+  }, [reportInput, t]);
 
   const handleImport = useCallback(() => {
     const input = document.createElement('input');
@@ -165,6 +210,9 @@ export const App: React.FC = () => {
           <button onClick={handleLoadSample}>{t('app.loadSample')}</button>
           <button onClick={handleImport}>{t('app.import')}</button>
           <button onClick={handleExport}>{t('app.export')}</button>
+          <button onClick={handleExportMarkdownReport}>{t('app.reportMd')}</button>
+          <button onClick={handleExportCsvReport}>{t('app.reportCsv')}</button>
+          <button onClick={handlePrintReport}>{t('app.reportPdf')}</button>
           <button onClick={() => { clearSelection(); resetModel(); }}>{t('app.new')}</button>
           <button className="top-icon-btn" onClick={toggleTheme} title={theme === 'dark' ? t('theme.light') : t('theme.dark')}>
             {theme === 'dark' ? '\u2600' : '\u263E'}
@@ -189,3 +237,13 @@ export const App: React.FC = () => {
     </div>
   );
 };
+
+function downloadText(filename: string, content: string, type: string): void {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}

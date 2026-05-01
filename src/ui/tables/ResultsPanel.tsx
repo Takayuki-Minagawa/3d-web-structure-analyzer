@@ -4,6 +4,7 @@ import { useT } from '../../i18n';
 import type { TKey } from '../../i18n';
 import type {
   AnalysisError,
+  AnalysisResult,
   DofName,
   ProjectModel,
   ReleasedMemberMode,
@@ -239,7 +240,7 @@ function useEffectiveReactions(model: ProjectModel, reactions: number[]) {
 
 const ReactionTable: React.FC<{
   model: ProjectModel;
-  result: import('../../state/projectStore').AnalysisResult;
+  result: AnalysisResult;
 }> = ({ model, result }) => {
   const t = useT();
   const { rows, hasSharedReactions } = useEffectiveReactions(model, result.reactions);

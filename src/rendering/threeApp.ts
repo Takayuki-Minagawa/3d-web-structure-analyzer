@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import type { ProjectModel, DiagramPoint } from '../core/model/types';
-import type { AnalysisResult } from '../state/projectStore';
+import type { ProjectModel, DiagramPoint, AnalysisResult } from '../core/model/types';
 import type { DisplayMode, EditTool, Theme } from '../state/viewStore';
 
 const CAMERA_FOV = 45;
