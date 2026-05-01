@@ -61,6 +61,20 @@ describe('projectStore basic operations', () => {
     expect(useProjectStore.getState().model.analysisMode).toBe('3d');
   });
 
+  it('can flatten off-plane nodes before switching to 2D X-Z mode', () => {
+    const state = useProjectStore.getState();
+    state.addNode(0, 1.25, 0);
+    state.addNode(4, 0, 0);
+
+    const convertedIds = useProjectStore.getState().flattenNodesToXzPlane();
+    expect(convertedIds).toHaveLength(1);
+    expect(useProjectStore.getState().model.nodes.map((n) => n.y)).toEqual([0, 0]);
+
+    const result = useProjectStore.getState().setAnalysisMode('xz2d');
+    expect(result.ok).toBe(true);
+    expect(useProjectStore.getState().model.analysisMode).toBe('xz2d');
+  });
+
   it('keeps node Y at zero while 2D X-Z mode is active', () => {
     const state = useProjectStore.getState();
     const id = state.addNode(0, 0, 0);

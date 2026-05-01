@@ -74,6 +74,7 @@ const ja = {
   'prop.analysisMode3d': '3Dフレーム',
   'prop.analysisModeXz2d': '2Dフレーム（X-Z）',
   'prop.yLockedXz2d': '2D X-ZモードではY座標は0固定です',
+  'prop.flattenToXz2d': '節点Yを0にして2D化',
 
   // Property panel - display settings
   'prop.displaySettings': '表示設定',
@@ -260,6 +261,7 @@ const en: Record<keyof typeof ja, string> = {
   'prop.analysisMode3d': '3D Frame',
   'prop.analysisModeXz2d': '2D Frame (X-Z)',
   'prop.yLockedXz2d': 'Y is fixed at 0 in 2D X-Z mode',
+  'prop.flattenToXz2d': 'Set node Y to 0',
 
   'prop.displaySettings': 'Display Settings',
   'prop.nodeLabels': 'Node Labels',
