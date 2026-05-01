@@ -15,6 +15,7 @@ import {
   getLoadCases,
   getLoadCombinations,
 } from '../../core/model/loadCases';
+import { MATERIAL_PRESETS, SECTION_PRESETS } from '../../core/model/library';
 
 /** Distributive Omit that works correctly with union types */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
@@ -492,12 +493,29 @@ const MaterialsEditor: React.FC = () => {
   const updateMaterial = useProjectStore((s) => s.updateMaterial);
   const removeMaterial = useProjectStore((s) => s.removeMaterial);
   const t = useT();
+  const [presetName, setPresetName] = React.useState(MATERIAL_PRESETS[0]?.name ?? '');
 
   const inUseIds = new Set(model.sections.map((s) => s.materialId));
+  const selectedPreset = MATERIAL_PRESETS.find((preset) => preset.name === presetName) ?? MATERIAL_PRESETS[0];
 
   return (
     <div className="prop-group">
       <div className="prop-title">{t('prop.materials')}</div>
+      {selectedPreset && (
+        <div className="editable-item">
+          <div className="prop-row">
+            <label>{t('prop.library')}</label>
+            <select value={presetName} onChange={(e) => setPresetName(e.target.value)}>
+              {MATERIAL_PRESETS.map((preset) => (
+                <option key={preset.name} value={preset.name}>{preset.name}</option>
+              ))}
+            </select>
+          </div>
+          <button className="small" onClick={() => addMaterial({ ...selectedPreset })}>
+            {t('prop.addFromLibrary')}
+          </button>
+        </div>
+      )}
       {model.materials.map((mat) => (
         <div key={mat.id} className="editable-item">
           <div className="prop-row">
@@ -542,13 +560,31 @@ const SectionsEditor: React.FC = () => {
   const updateSection = useProjectStore((s) => s.updateSection);
   const removeSection = useProjectStore((s) => s.removeSection);
   const t = useT();
+  const [presetName, setPresetName] = React.useState(SECTION_PRESETS[0]?.name ?? '');
 
   const inUseIds = new Set(model.members.map((m) => m.sectionId));
   const matId = model.materials[0]?.id ?? '';
+  const selectedPreset = SECTION_PRESETS.find((preset) => preset.name === presetName) ?? SECTION_PRESETS[0];
 
   return (
     <div className="prop-group">
       <div className="prop-title">{t('prop.sections')}</div>
+      {selectedPreset && (
+        <div className="editable-item">
+          <div className="prop-row">
+            <label>{t('prop.library')}</label>
+            <select value={presetName} onChange={(e) => setPresetName(e.target.value)}>
+              {SECTION_PRESETS.map((preset) => (
+                <option key={preset.name} value={preset.name}>{preset.name}</option>
+              ))}
+            </select>
+          </div>
+          <button className="small" disabled={!matId}
+            onClick={() => addSection({ ...selectedPreset, materialId: matId })}>
+            {t('prop.addFromLibrary')}
+          </button>
+        </div>
+      )}
       {model.sections.map((sec) => (
         <div key={sec.id} className="editable-item">
           <div className="prop-row">

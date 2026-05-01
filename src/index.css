@@ -481,16 +481,30 @@ input[type="range"] {
   border-radius: 4px;
 }
 
-.editable-item button.danger.small {
+.editable-item button.small {
   width: 100%;
   padding: 3px 6px;
   margin-top: 4px;
   background: transparent;
-  border: 1px solid var(--danger);
-  color: var(--danger);
+  border: 1px solid var(--border);
+  color: var(--text);
   border-radius: 3px;
   cursor: pointer;
   font-size: 11px;
+}
+
+.editable-item button.small:hover {
+  background: var(--border);
+}
+
+.editable-item button.small:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.editable-item button.danger.small {
+  border: 1px solid var(--danger);
+  color: var(--danger);
 }
 
 .editable-item button.danger.small:hover {
