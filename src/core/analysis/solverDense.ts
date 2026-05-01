@@ -1,3 +1,15 @@
+export class SingularMatrixError extends Error {
+  readonly pivotIndex: number;
+  readonly pivotValue: number;
+
+  constructor(message: string, pivotIndex: number, pivotValue: number) {
+    super(message);
+    this.name = 'SingularMatrixError';
+    this.pivotIndex = pivotIndex;
+    this.pivotValue = pivotValue;
+  }
+}
+
 /**
  * Solve a symmetric positive-definite system Ax = b using LDLᵀ decomposition.
  * A is n×n row-major Float64Array, b is n-element Float64Array.
@@ -25,8 +37,10 @@ export function solveLDLt(
     }
 
     if (Math.abs(dj) < PIVOT_TOL) {
-      throw new Error(
-        `剛性マトリクスが特異です（ピボット ${j} が ${dj.toExponential(3)}）。拘束条件を確認してください。`
+      throw new SingularMatrixError(
+        `剛性マトリクスが特異です（ピボット ${j} が ${dj.toExponential(3)}）。拘束条件を確認してください。`,
+        j,
+        dj
       );
     }
 

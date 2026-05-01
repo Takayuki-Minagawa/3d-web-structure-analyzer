@@ -6,9 +6,10 @@ import type {
 import { assembleGlobalStiffness } from './assembly';
 import { buildGlobalForceVector } from './loads';
 import { partitionDofs, extractFreeSystem } from './constraints';
-import { solveLDLt } from './solverDense';
+import { SingularMatrixError, solveLDLt } from './solverDense';
 import { computeReactions, computeAllElementEndForces } from './recover';
 import { generateAllDiagrams } from './diagrams';
+import { createSingularStabilityDiagnostics } from './stabilityDiagnostics';
 
 /**
  * Main analysis entry point.
@@ -38,11 +39,15 @@ export function analyzeFrame(input: AnalysisInput): AnalysisOutput {
     try {
       df = solveLDLt(Kff, Ff, freeDofs.length);
     } catch (e) {
+      const diagnostics = e instanceof SingularMatrixError
+        ? createSingularStabilityDiagnostics(model, K, freeDofs, e.pivotIndex)
+        : createSingularStabilityDiagnostics(model, K, freeDofs);
       throw createAnalysisError(
         'singular',
         e instanceof Error
           ? e.message
-          : '剛性マトリクスが特異です。拘束条件を確認してください。'
+          : '剛性マトリクスが特異です。拘束条件を確認してください。',
+        diagnostics
       );
     }
 
@@ -89,9 +94,11 @@ export function analyzeFrame(input: AnalysisInput): AnalysisOutput {
 
 function createAnalysisError(
   type: AnalysisError['type'],
-  message: string
+  message: string,
+  diagnostics?: AnalysisError['diagnostics']
 ): AnalysisError & Error {
   const err = new Error(message) as AnalysisError & Error;
   err.type = type;
+  if (diagnostics && diagnostics.length > 0) err.diagnostics = diagnostics;
   return err;
 }

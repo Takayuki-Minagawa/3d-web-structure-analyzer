@@ -48,12 +48,16 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
       self.postMessage(resp);
     } catch (err) {
       const analysisErr = err as AnalysisError & Error;
+      const error: AnalysisError = {
+        type: analysisErr.type ?? 'numerical',
+        message: analysisErr.message ?? 'An unknown error occurred during analysis.',
+      };
+      if (analysisErr.elementId !== undefined) error.elementId = analysisErr.elementId;
+      if (analysisErr.nodeId !== undefined) error.nodeId = analysisErr.nodeId;
+      if (analysisErr.diagnostics !== undefined) error.diagnostics = analysisErr.diagnostics;
       const resp: WorkerResponse = {
         type: 'analyze-error',
-        error: {
-          type: analysisErr.type ?? 'numerical',
-          message: analysisErr.message ?? 'An unknown error occurred during analysis.',
-        },
+        error,
       };
       self.postMessage(resp);
     }

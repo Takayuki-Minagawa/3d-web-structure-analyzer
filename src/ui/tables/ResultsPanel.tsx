@@ -1,10 +1,33 @@
 import React, { useState, useMemo } from 'react';
 import { useProjectStore } from '../../state/projectStore';
 import { useT } from '../../i18n';
-import type { ProjectModel } from '../../core/model/types';
+import type { TKey } from '../../i18n';
+import type {
+  AnalysisError,
+  DofName,
+  ProjectModel,
+  ReleasedMemberMode,
+  StabilityDiagnostic,
+} from '../../core/model/types';
 import { buildEffectiveReactionRows } from './reactionRows';
 
 type TabId = 'displacements' | 'reactions' | 'endForces';
+type Translate = (key: TKey) => string;
+
+const DOF_LABEL_KEYS: Record<DofName, TKey> = {
+  ux: 'results.dof.ux',
+  uy: 'results.dof.uy',
+  uz: 'results.dof.uz',
+  rx: 'results.dof.rx',
+  ry: 'results.dof.ry',
+  rz: 'results.dof.rz',
+};
+
+const RELEASE_LABEL_KEYS: Record<ReleasedMemberMode, TKey> = {
+  localXTwist: 'results.release.localXTwist',
+  localYBending: 'results.release.localYBending',
+  localZBending: 'results.release.localZBending',
+};
 
 export const ResultsPanel: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('displacements');
@@ -22,7 +45,7 @@ export const ResultsPanel: React.FC = () => {
   if (error) {
     return (
       <div className="results-panel">
-        <div className="error-text">{error.message}</div>
+        <AnalysisErrorDetails error={error} />
       </div>
     );
   }
@@ -105,6 +128,107 @@ export const ResultsPanel: React.FC = () => {
     </div>
   );
 };
+
+const AnalysisErrorDetails: React.FC<{ error: AnalysisError }> = ({ error }) => {
+  const t = useT();
+  const diagnostics = error.diagnostics ?? [];
+
+  return (
+    <div className="analysis-error">
+      <div className="error-text">{formatAnalysisErrorMessage(error, t)}</div>
+      {diagnostics.length > 0 && (
+        <div className="diagnostics-list">
+          <div className="diagnostics-title">{t('results.diagnostics')}</div>
+          {diagnostics.map((diagnostic, index) => (
+            <DiagnosticItem key={`${diagnostic.kind}-${index}`} diagnostic={diagnostic} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const DiagnosticItem: React.FC<{ diagnostic: StabilityDiagnostic }> = ({ diagnostic }) => {
+  const t = useT();
+  const formatted = formatDiagnostic(diagnostic, t);
+  const meta = [
+    diagnostic.nodeId ? `${t('results.node')} ${diagnostic.nodeId}` : null,
+    diagnostic.elementId ? `${t('results.member')} ${diagnostic.elementId}` : null,
+    diagnostic.dof ? `DOF ${diagnostic.dof}` : null,
+  ].filter((item): item is string => item !== null);
+
+  return (
+    <div className="diagnostic-item">
+      <div>{formatted.message}</div>
+      {meta.length > 0 && <div className="diagnostic-meta">{meta.join(' / ')}</div>}
+      <div className="diagnostic-suggestion">
+        <span>{t('results.diagnosticSuggestion')}</span>
+        {formatted.suggestion}
+      </div>
+    </div>
+  );
+};
+
+function formatAnalysisErrorMessage(error: AnalysisError, t: Translate): string {
+  if (error.type === 'singular') return t('results.error.singular');
+  return error.message;
+}
+
+function formatDiagnostic(
+  diagnostic: StabilityDiagnostic,
+  t: Translate
+): { message: string; suggestion: string } {
+  if (diagnostic.kind === 'singular-pivot') {
+    return {
+      message: formatText(t, 'results.diagnostic.singularPivot.message', {
+        nodeId: diagnostic.nodeId ?? '-',
+        dofLabel: formatDofLabel(diagnostic.dof, t),
+      }),
+      suggestion: t('results.diagnostic.singularPivot.suggestion'),
+    };
+  }
+
+  if (diagnostic.kind === 'zero-stiffness-dof') {
+    return {
+      message: formatText(t, 'results.diagnostic.zeroStiffness.message', {
+        nodeId: diagnostic.nodeId ?? '-',
+        dofLabel: formatDofLabel(diagnostic.dof, t),
+      }),
+      suggestion: t('results.diagnostic.zeroStiffness.suggestion'),
+    };
+  }
+
+  return {
+    message: formatText(t, 'results.diagnostic.releasedMember.message', {
+      memberId: diagnostic.elementId ?? '-',
+      releasedModes: formatReleasedModes(diagnostic, t),
+    }),
+    suggestion: t('results.diagnostic.releasedMember.suggestion'),
+  };
+}
+
+function formatText(
+  t: Translate,
+  key: TKey,
+  values: Record<string, string>
+): string {
+  return Object.entries(values).reduce(
+    (text, [name, value]) => text.split(`{${name}}`).join(value),
+    t(key)
+  );
+}
+
+function formatDofLabel(dof: StabilityDiagnostic['dof'], t: Translate): string {
+  if (!dof) return '-';
+  return t(DOF_LABEL_KEYS[dof]);
+}
+
+function formatReleasedModes(diagnostic: StabilityDiagnostic, t: Translate): string {
+  const released = diagnostic.released ?? [];
+  if (released.length === 0) return '-';
+  const separator = t('results.listSeparator');
+  return released.map((mode) => t(RELEASE_LABEL_KEYS[mode])).join(separator);
+}
 
 function useEffectiveReactions(model: ProjectModel, reactions: number[]) {
   return useMemo(

@@ -63,6 +63,7 @@ npm test
 - 同一変位カップリング（master-slave DOF、slave側拘束の master 伝播を含む）
 - Web Workerによる非同期解析（UI非ブロック）
 - LDLt分解による連立方程式求解
+- 特異剛性マトリクス発生時の不安定モデル診断（候補節点DOF、剛性ゼロDOF、両端ピン部材の表示）
 
 ### 結果表示
 - Three.js による3D変形図（倍率調整可能）

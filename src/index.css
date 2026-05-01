@@ -407,6 +407,52 @@ input[type="range"] {
   padding: 4px 0;
 }
 
+.analysis-error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.diagnostics-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.diagnostics-title {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.diagnostic-item {
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warning);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.diagnostic-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+.diagnostic-suggestion {
+  color: var(--text);
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.diagnostic-suggestion span {
+  color: var(--warning);
+  font-weight: 600;
+}
+
 .warning-text {
   color: var(--warning);
   font-size: 12px;
