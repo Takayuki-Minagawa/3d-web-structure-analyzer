@@ -144,8 +144,8 @@ export const App: React.FC = () => {
       ...(buckling ? { buckling } : {}),
       error: staticIsStale ? null : state.analysisError,
       generatedAt: new Date(),
-      // The stale static result is omitted above; the report says so.
-      isResultStale: staticIsStale,
+      // A stale static result is omitted above; the report says so.
+      isResultStale: staticIsStale && (state.analysisResult !== null || state.analysisError !== null),
     };
   }, [t]);
 

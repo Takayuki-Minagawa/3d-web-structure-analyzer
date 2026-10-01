@@ -293,7 +293,6 @@ function buildReportDocument(input: ReportInput): ReportDocument {
   };
 }
 
-
 export function generateMarkdownReport(input: ReportInput): string {
   const doc = buildReportDocument(input);
   const lines: string[] = [
