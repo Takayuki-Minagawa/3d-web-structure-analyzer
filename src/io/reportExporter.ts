@@ -64,6 +64,10 @@ type ResolvedReportResult = {
   governingTargets: EnvelopeGoverningTargets | null;
 };
 
+const NO_RESULT_MESSAGE = 'No analysis result is available.';
+const STALE_RESULT_MESSAGE =
+  'Static analysis results are out of date for this model and were omitted. Run the analysis again.';
+
 interface ReportTable {
   /** Heading used by the Markdown and HTML renderers. */
   title: string;
@@ -86,6 +90,8 @@ interface ReportDocument {
   /** Modal / buckling summaries; independent of the static result. */
   eigenTables: ReportTable[];
   warnings: string[];
+  /** Shown in place of the static result tables when there are none. */
+  noResultMessage: string;
   errorMessage: string | null;
 }
 
@@ -277,12 +283,16 @@ function buildReportDocument(input: ReportInput): ReportDocument {
     inputTables: buildInputTables(model),
     resultTables: resolved ? buildResultTables(model, resolved) : null,
     eigenTables: buildEigenTables(input),
-    warnings: resolved?.result.warnings ?? [],
+    warnings: [...new Set([
+      ...(resolved?.result.warnings ?? []),
+      ...(input.modal?.warnings ?? []),
+      ...(input.buckling?.warnings ?? []),
+    ])],
+    noResultMessage: input.isResultStale ? STALE_RESULT_MESSAGE : NO_RESULT_MESSAGE,
     errorMessage: error?.message ?? null,
   };
 }
 
-const NO_RESULT_MESSAGE = 'No analysis result is available.';
 
 export function generateMarkdownReport(input: ReportInput): string {
   const doc = buildReportDocument(input);
@@ -298,25 +308,25 @@ export function generateMarkdownReport(input: ReportInput): string {
     '',
   ];
 
+  const warningLines = doc.warnings.length > 0
+    ? ['## Warnings', '', ...doc.warnings.map((warning) => `- ${warning}`), '']
+    : [];
   if (doc.errorMessage !== null) {
     lines.push('## Analysis Error', '', doc.errorMessage, '');
     for (const table of doc.eigenTables) {
       lines.push(`## ${table.title}`, '', markdownTable(table.headers, table.rows), '');
     }
-    return lines.join('\n');
+    return [...lines, ...warningLines].join('\n');
   }
 
   for (const table of doc.inputTables) {
     lines.push(`## ${table.title}`, '', markdownTable(table.headers, table.rows), '');
   }
-  if (!doc.resultTables) lines.push('## Results', '', NO_RESULT_MESSAGE, '');
+  if (!doc.resultTables) lines.push('## Results', '', doc.noResultMessage, '');
   for (const table of [...(doc.resultTables ?? []), ...doc.eigenTables]) {
     lines.push(`## ${table.title}`, '', markdownTable(table.headers, table.rows), '');
   }
-  if (doc.warnings.length > 0) {
-    lines.push('## Warnings', '', ...doc.warnings.map((warning) => `- ${warning}`), '');
-  }
-  return lines.join('\n');
+  return [...lines, ...warningLines].join('\n');
 }
 
 export function generateCsvReport(input: ReportInput): string {
@@ -337,12 +347,11 @@ export function generateCsvReport(input: ReportInput): string {
   if (doc.errorMessage !== null) {
     rows.push(['Analysis Error'], [doc.errorMessage], []);
     doc.eigenTables.forEach(pushTable);
-    return rows.map(csvRow).join('\n');
+  } else {
+    doc.inputTables.forEach(pushTable);
+    if (!doc.resultTables) rows.push(['Results'], [doc.noResultMessage], []);
+    [...(doc.resultTables ?? []), ...doc.eigenTables].forEach(pushTable);
   }
-
-  doc.inputTables.forEach(pushTable);
-  if (!doc.resultTables) rows.push(['Results'], [NO_RESULT_MESSAGE], []);
-  [...(doc.resultTables ?? []), ...doc.eigenTables].forEach(pushTable);
   if (doc.warnings.length > 0) {
     rows.push(['Warnings'], ...doc.warnings.map((warning) => [warning]));
   }
@@ -359,7 +368,7 @@ export function generatePrintableReportHtml(input: ReportInput): string {
       ? doc.resultTables.map(tableSection).join('')
       : sectionHtml(
           doc.errorMessage !== null ? 'Analysis Error' : 'Results',
-          `<p class="${doc.errorMessage !== null ? 'error' : ''}">${escapeHtml(doc.errorMessage ?? NO_RESULT_MESSAGE)}</p>`,
+          `<p class="${doc.errorMessage !== null ? 'error' : ''}">${escapeHtml(doc.errorMessage ?? doc.noResultMessage)}</p>`,
         ),
     ...doc.eigenTables.map(tableSection),
     doc.warnings.length

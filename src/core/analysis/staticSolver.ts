@@ -63,14 +63,18 @@ export function prepareStaticSystem(model: IndexedModel): StaticSystem {
 
 /** Relative tolerance for two coupled supports prescribing the same movement. */
 const PRESCRIBED_AGREEMENT_TOLERANCE = 1e-9;
+/** Sums below this fraction of their largest term are cancellation round-off. */
+const PRESCRIBED_CANCELLATION_TOLERANCE = 1e-12;
 
 /**
  * Collect prescribed displacements into a full-length vector addressed by
  * effective (coupling-resolved) DOF. Returns null when nothing is prescribed.
  *
- * Entries on the same nodal DOF superpose (load combinations expand into one
- * scaled entry per case). DOFs of different nodes that are coupled together
- * share one displacement, so their prescriptions must agree instead of adding.
+ * Each load case is resolved on its own: entries on the same nodal DOF add
+ * up, while DOFs of different nodes that are coupled together share one
+ * displacement, so their prescriptions must agree rather than add. The
+ * per-case values are then superposed, which keeps a load combination equal
+ * to the factored sum of its cases (combination entries keep their case id).
  */
 export function buildPrescribedDisplacementVector(
   model: IndexedModel,
@@ -80,10 +84,17 @@ export function buildPrescribedDisplacementVector(
   const isFixed = new Uint8Array(model.dofCount);
   for (const dof of fixedDofs) isFixed[dof] = 1;
 
-  const bySourceDof = new Map<number, { value: number; nodeId: string; id: string }>();
+  interface SourceEntry { value: number; largestTerm: number; nodeId: string; id: string }
+  const byCase = new Map<string, Map<number, SourceEntry>>();
   for (const item of model.prescribedDisplacements) {
     const nodeIndex = model.nodeIdToIndex.get(item.nodeId);
     if (nodeIndex === undefined) continue;
+    const caseKey = item.loadCaseId ?? '';
+    let bySourceDof = byCase.get(caseKey);
+    if (!bySourceDof) {
+      bySourceDof = new Map();
+      byCase.set(caseKey, bySourceDof);
+    }
     const values = dofValues(item);
     for (let localDof = 0; localDof < 6; localDof++) {
       const value = values[localDof]!;
@@ -92,37 +103,51 @@ export function buildPrescribedDisplacementVector(
       if (!isFixed[model.dofMap[sourceDof]!]) {
         throw createAnalysisException(
           'validation',
-          `強制変位 ${item.id} は拘束されていない自由度に指定されています。`,
+          `強制変位 ${sourceId(item.id)} は拘束されていない自由度に指定されています。`,
           { nodeId: item.nodeId }
         );
       }
       const entry = bySourceDof.get(sourceDof);
-      if (entry) entry.value += value;
-      else bySourceDof.set(sourceDof, { value, nodeId: item.nodeId, id: item.id });
+      if (entry) {
+        entry.value += value;
+        entry.largestTerm = Math.max(entry.largestTerm, Math.abs(value));
+      } else {
+        bySourceDof.set(sourceDof, {
+          value, largestTerm: Math.abs(value), nodeId: item.nodeId, id: item.id,
+        });
+      }
     }
   }
 
   const prescribed = new Float64Array(model.dofCount);
-  const assigned = new Map<number, { value: number; id: string }>();
-  for (const [sourceDof, entry] of bySourceDof) {
-    if (entry.value === 0) continue; // contributions cancelled out
-    const dof = model.dofMap[sourceDof]!;
-    const previous = assigned.get(dof);
-    if (previous) {
+  for (const bySourceDof of byCase.values()) {
+    const assigned = new Map<number, SourceEntry>();
+    for (const [sourceDof, entry] of bySourceDof) {
+      if (Math.abs(entry.value) <= entry.largestTerm * PRESCRIBED_CANCELLATION_TOLERANCE) continue;
+      const dof = model.dofMap[sourceDof]!;
+      const previous = assigned.get(dof);
+      if (!previous) {
+        assigned.set(dof, entry);
+        prescribed[dof] = prescribed[dof]! + entry.value;
+        continue;
+      }
       const scale = Math.max(Math.abs(previous.value), Math.abs(entry.value));
       if (Math.abs(previous.value - entry.value) > scale * PRESCRIBED_AGREEMENT_TOLERANCE) {
         throw createAnalysisException(
           'validation',
-          `強制変位 ${previous.id} と ${entry.id} は同一変位カップリングで連成された自由度に異なる値を指定しています。`,
+          `強制変位 ${sourceId(previous.id)} と ${sourceId(entry.id)} は同一変位カップリングで連成された自由度に、同じ荷重ケース内で異なる値を指定しています。`,
           { nodeId: entry.nodeId }
         );
       }
-      continue;
     }
-    assigned.set(dof, { value: entry.value, id: entry.id });
-    prescribed[dof] = entry.value;
   }
   return prescribed;
+}
+
+/** Id of the user's entry behind a combination-scaled copy (`id@case*factor`). */
+function sourceId(id: string): string {
+  const separator = id.indexOf('@');
+  return separator > 0 ? id.slice(0, separator) : id;
 }
 
 /**

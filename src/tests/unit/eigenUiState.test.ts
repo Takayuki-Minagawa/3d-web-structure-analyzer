@@ -208,6 +208,29 @@ describe('eigen results in reports', () => {
     }
   });
 
+  it('carries eigen warnings and explains omitted stale static results', () => {
+    const model = column();
+    const { modal } = storedResults(model);
+    const input = {
+      model,
+      result: null,
+      modal: { ...modal, warnings: ['Members were not subdivided.'] },
+      error: null,
+      generatedAt: new Date('2026-01-01T00:00:00Z'),
+      isResultStale: true,
+    };
+    for (const report of [
+      generateMarkdownReport(input),
+      generateCsvReport(input),
+      generatePrintableReportHtml(input),
+    ]) {
+      expect(report).toContain('Members were not subdivided.');
+      expect(report).toContain('out of date');
+      expect(report).not.toContain('No analysis result is available.');
+      expect(report).toContain('Modal Analysis');
+    }
+  });
+
   it('describes trapezoidal loads and prescribed displacements in the input tables', () => {
     const model = column();
     model.memberLoads = [{

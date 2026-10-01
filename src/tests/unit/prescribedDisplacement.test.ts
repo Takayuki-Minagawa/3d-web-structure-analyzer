@@ -168,6 +168,112 @@ describe('prescribed support displacements', () => {
     expect(() => analyzeFrame({ model: buildIndexedModel(conflicting) })).toThrow(/異なる値/);
   });
 
+  it('keeps combinations equal to the factored sum of cases with coupled supports', () => {
+    // Nodes j and k are both fixed and coupled in uy; cases prescribe them separately.
+    const coupledCases = (
+      prescribed: PrescribedDisplacement[],
+      factors: Array<[string, number]>
+    ) => {
+      const model = beam(FIXED, prescribed);
+      model.nodes.push({ id: 'k', x: 2 * L, y: 0, z: 0, restraint: FIXED });
+      model.members.push({
+        id: 'beam2', ni: 'j', nj: 'k', sectionId: 'sec', codeAngle: 0,
+        iSprings: { x: 0, y: 0, z: 0 }, jSprings: { x: 0, y: 0, z: 0 },
+      });
+      model.couplings = [{
+        id: 'c', masterNodeId: 'j', slaveNodeId: 'k',
+        ux: false, uy: true, uz: false, rx: false, ry: false, rz: false,
+      }];
+      model.loadCases = [{ id: 'A', name: 'A' }, { id: 'B', name: 'B' }];
+      model.loadCombinations = [{
+        id: 'combo', name: 'combo',
+        factors: factors.map(([loadCaseId, factor]) => ({ loadCaseId, factor })),
+      }];
+      expect(validateModel(model)).toEqual([]);
+      const byId = new Map(analyzeAllLoadTargets(model).results.map((r) => [r.target.id, r]));
+      return (targetId: string) => byId.get(targetId)!.displacements[7]!;
+    };
+
+    // Different coupled nodes in different cases add up in the combination.
+    const separate = coupledCases([
+      settlement({ id: 'a', loadCaseId: 'A', nodeId: 'j', uy: -0.01 }),
+      settlement({ id: 'b', loadCaseId: 'B', nodeId: 'k', uy: -0.02 }),
+    ], [['A', 1], ['B', 1]]);
+    expect(separate('A')).toBe(-0.01);
+    expect(separate('B')).toBe(-0.02);
+    expect(separate('combo')).toBeCloseTo(-0.03, 14);
+
+    // Equal values in different cases are not mistaken for one shared prescription.
+    const equal = coupledCases([
+      settlement({ id: 'a', loadCaseId: 'A', nodeId: 'j', uy: -0.01 }),
+      settlement({ id: 'b', loadCaseId: 'B', nodeId: 'k', uy: -0.01 }),
+    ], [['A', 1], ['B', 1]]);
+    expect(equal('combo')).toBeCloseTo(-0.02, 14);
+
+    // A case prescribing both coupled nodes consistently counts once, and cancels correctly.
+    const cancelling = coupledCases([
+      settlement({ id: 'a1', loadCaseId: 'A', nodeId: 'j', uy: -0.01 }),
+      settlement({ id: 'a2', loadCaseId: 'A', nodeId: 'k', uy: -0.01 }),
+      settlement({ id: 'b', loadCaseId: 'B', nodeId: 'j', uy: -0.01 }),
+    ], [['A', 1], ['B', -1]]);
+    expect(cancelling('A')).toBe(-0.01);
+    expect(cancelling('combo')).toBeCloseTo(0, 14);
+
+    // Factored cases keep their own consistency.
+    const factored = coupledCases([
+      settlement({ id: 'a', loadCaseId: 'A', nodeId: 'j', uy: -0.01 }),
+      settlement({ id: 'b', loadCaseId: 'B', nodeId: 'k', uy: -0.02 }),
+    ], [['A', 1.2], ['B', 1.5]]);
+    expect(factored('combo')).toBeCloseTo(-0.042, 14);
+  });
+
+  it('treats round-off left by cancelling entries on one DOF as zero', () => {
+    const model = beam(FIXED, [
+      settlement({ id: 'p1', uy: 0.1 }),
+      settlement({ id: 'p2', uy: 0.2 }),
+      settlement({ id: 'p3', uy: -0.3 }),
+      settlement({ id: 'pk', nodeId: 'k', uy: 0.01 }),
+    ]);
+    model.nodes.push({ id: 'k', x: 2 * L, y: 0, z: 0, restraint: FIXED });
+    model.members.push({
+      id: 'beam2', ni: 'j', nj: 'k', sectionId: 'sec', codeAngle: 0,
+      iSprings: { x: 0, y: 0, z: 0 }, jSprings: { x: 0, y: 0, z: 0 },
+    });
+    model.couplings = [{
+      id: 'c', masterNodeId: 'j', slaveNodeId: 'k',
+      ux: false, uy: true, uz: false, rx: false, ry: false, rz: false,
+    }];
+    const result = analyze(model);
+    expect(result.displacements[7]).toBe(0.01);
+  });
+
+  it('reports conflicting coupled supports with the user-facing entry ids', () => {
+    const model = beam(FIXED, [
+      settlement({ id: 'pd-j', loadCaseId: 'A', uy: -0.01 }),
+      settlement({ id: 'pd-k', loadCaseId: 'A', nodeId: 'k', uy: -0.03 }),
+    ]);
+    model.nodes.push({ id: 'k', x: 2 * L, y: 0, z: 0, restraint: FIXED });
+    model.members.push({
+      id: 'beam2', ni: 'j', nj: 'k', sectionId: 'sec', codeAngle: 0,
+      iSprings: { x: 0, y: 0, z: 0 }, jSprings: { x: 0, y: 0, z: 0 },
+    });
+    model.couplings = [{
+      id: 'c', masterNodeId: 'j', slaveNodeId: 'k',
+      ux: false, uy: true, uz: false, rx: false, ry: false, rz: false,
+    }];
+    model.loadCases = [{ id: 'A', name: 'A' }];
+    model.loadCombinations = [{ id: 'combo', name: 'combo', factors: [{ loadCaseId: 'A', factor: 2 }] }];
+    let message = '';
+    try {
+      analyzeAllLoadTargets(model);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain('pd-j');
+    expect(message).toContain('pd-k');
+    expect(message).not.toContain('@');
+  });
+
   it('adds entries on the same nodal DOF', () => {
     const result = analyze(beam(FIXED, [
       settlement({ id: 'a', uy: -0.01 }),

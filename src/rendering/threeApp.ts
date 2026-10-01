@@ -424,7 +424,6 @@ export class ThreeApp {
     updateDeformationGeometry(this.deformationGeometry, scale * animationFactor);
   }
 
-
   private drawLabels(): void {
     this.labelOverlay.draw({
       model: this.model,

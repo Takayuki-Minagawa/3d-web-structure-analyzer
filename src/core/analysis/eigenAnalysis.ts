@@ -47,13 +47,17 @@ const RELATIVE_EIGENVALUE_TOLERANCE = 1e-10;
 /** Deflection samples per member in a mode shape. */
 const SHAPE_SAMPLES_PER_MEMBER = 12;
 
-interface EigenSystem {
+/** Subdivided, size-checked model; no dense matrix has been allocated yet. */
+interface EigenPlan {
   refined: SubdividedModel;
   indexed: IndexedModel;
-  K: Float64Array;
   freeDofs: number[];
   divisions: number;
   warnings: string[];
+}
+
+interface EigenSystem extends EigenPlan {
+  K: Float64Array;
 }
 
 function resolveModeCount(options: EigenAnalysisOptions): number {
@@ -99,13 +103,15 @@ function subdivideForEigen(model: ProjectModel, options: EigenAnalysisOptions): 
   return system!;
 }
 
-/** Validate sizes and assemble the stiffness side of an eigenproblem. */
-function prepareEigenSystem(model: ProjectModel, options: EigenAnalysisOptions): EigenSystem {
+/**
+ * Subdivide and reject oversized problems. This is linear-time and runs
+ * before any factorization, so a too-large model fails fast.
+ */
+function planEigenSystem(model: ProjectModel, options: EigenAnalysisOptions): EigenPlan {
   const { refined, indexed, freeDofs, divisions } = subdivideForEigen(model, options);
   if (freeDofs.length === 0) {
     throw createAnalysisException('validation', '自由な自由度がないため固有値解析を実行できません。');
   }
-  // Checked before any dense matrix is allocated.
   if (freeDofs.length > MAX_EIGEN_FREE_DOFS || indexed.dofCount > MAX_EIGEN_TOTAL_DOFS) {
     const advice = divisions > 1
       ? '部材分割数を減らしてください。'
@@ -127,8 +133,11 @@ function prepareEigenSystem(model: ProjectModel, options: EigenAnalysisOptions):
       'モデル規模が大きいため部材を分割せずに解析しました。部材内の局所的な振動・座屈モードは表現されず、座屈荷重係数を過大評価することがあります。'
     );
   }
-  const K = assembleGlobalStiffness(indexed);
-  return { refined, indexed, K, freeDofs, divisions, warnings };
+  return { refined, indexed, freeDofs, divisions, warnings };
+}
+
+function assembleEigenSystem(plan: EigenPlan): EigenSystem {
+  return { ...plan, K: assembleGlobalStiffness(plan.indexed) };
 }
 
 function extractFreeBlock(matrix: Float64Array, freeDofs: readonly number[], n: number): Float64Array {
@@ -188,10 +197,10 @@ function buildModeShape(
       if (Math.abs(value) > Math.abs(translationPeak)) translationPeak = value;
     } else if (Math.abs(value) > Math.abs(rotationPeak)) rotationPeak = value;
   }
-  let longestMember = 0;
-  for (const member of indexed.members) longestMember = Math.max(longestMember, member.L);
+  let longestElement = 0;
+  for (const member of indexed.members) longestElement = Math.max(longestElement, member.L);
   const translationIsNoise =
-    Math.abs(translationPeak) <= TRANSLATION_NOISE_RATIO * Math.abs(rotationPeak) * longestMember;
+    Math.abs(translationPeak) <= TRANSLATION_NOISE_RATIO * Math.abs(rotationPeak) * longestElement;
   const peak = translationIsNoise ? rotationPeak : translationPeak;
   const scale = peak === 0 ? 1 : peak;
   for (let dof = 0; dof < indexed.dofCount; dof++) full[dof] = full[dof]! / scale;
@@ -279,10 +288,11 @@ export function analyzeModal(
       '質量が定義されていません。材料密度または節点質量を設定してください。'
     );
   }
+  const plan = planEigenSystem(model, options);
   // Surfaces instability of the model itself with full diagnostics.
   prepareStaticSystem(buildIndexedModel(model));
 
-  const system = prepareEigenSystem(model, options);
+  const system = assembleEigenSystem(plan);
   const { indexed, freeDofs } = system;
   const n = indexed.dofCount;
   const size = freeDofs.length;
@@ -393,13 +403,14 @@ export function analyzeBuckling(
 ): BucklingAnalysisOutput {
   assertValidModel(model);
   const target = resolveBucklingTarget(model, options.targetId);
+  const plan = planEigenSystem(model, options);
   const baseIndexed = buildIndexedModel(model);
   const reference = solveStaticLoadSet(
     prepareStaticSystem(baseIndexed),
     indexedModelForTarget(baseIndexed, model, target)
   );
 
-  const system = prepareEigenSystem(model, options);
+  const system = assembleEigenSystem(plan);
   const { indexed, freeDofs, refined } = system;
 
   // Each element takes the reference axial force at its own midpoint.

@@ -60,7 +60,11 @@ function loadSetForCase(model: ProjectModel, loadCaseId: LoadCaseId): LoadSet {
   return {
     nodalLoads: model.nodalLoads.filter(inCase),
     memberLoads: model.memberLoads.filter(inCase),
-    prescribedDisplacements: (model.prescribedDisplacements ?? []).filter(inCase),
+    // The solver resolves coupled supports per load case, so entries whose
+    // stored case id is missing or unknown carry the case they resolve to.
+    prescribedDisplacements: (model.prescribedDisplacements ?? [])
+      .filter(inCase)
+      .map((item) => (item.loadCaseId === loadCaseId ? item : { ...item, loadCaseId })),
   };
 }
 
