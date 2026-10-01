@@ -7,7 +7,9 @@ import type {
   Member,
   MemberLoad,
   NodalLoad,
+  NodalMass,
   NodalSpringSupport,
+  PrescribedDisplacement,
   ProjectFile,
   ProjectModel,
   Restraint,
@@ -269,6 +271,17 @@ function parseMemberLoad(value: unknown, path: string): MemberLoad {
       value: numberAt(load.value, `${path}.value`),
     };
   }
+  if (type === 'trapezoid') {
+    return {
+      ...common,
+      type,
+      direction,
+      value: numberAt(load.value, `${path}.value`),
+      valueEnd: numberAt(load.valueEnd, `${path}.valueEnd`),
+      a: numberAt(load.a, `${path}.a`),
+      b: numberAt(load.b, `${path}.b`),
+    };
+  }
   if (type === 'point') {
     return {
       ...common,
@@ -280,7 +293,7 @@ function parseMemberLoad(value: unknown, path: string): MemberLoad {
   }
   return fail(
     `${path}.type`,
-    'must be "point", "udl", "cmq", "temperature", or "selfWeight".'
+    'must be "point", "udl", "trapezoid", "cmq", "temperature", or "selfWeight".'
   );
 }
 
@@ -295,6 +308,31 @@ function parseNodalSpring(value: unknown, path: string): NodalSpringSupport {
     rx: numberAt(spring.rx, `${path}.rx`),
     ry: numberAt(spring.ry, `${path}.ry`),
     rz: numberAt(spring.rz, `${path}.rz`),
+  };
+}
+
+function parsePrescribedDisplacement(value: unknown, path: string): PrescribedDisplacement {
+  const item = objectAt(value, path);
+  const loadCaseId = optionalStringAt(item.loadCaseId, `${path}.loadCaseId`);
+  return {
+    id: stringAt(item.id, `${path}.id`),
+    ...(loadCaseId === undefined ? {} : { loadCaseId }),
+    nodeId: stringAt(item.nodeId, `${path}.nodeId`),
+    ux: numberAt(item.ux, `${path}.ux`),
+    uy: numberAt(item.uy, `${path}.uy`),
+    uz: numberAt(item.uz, `${path}.uz`),
+    rx: numberAt(item.rx, `${path}.rx`),
+    ry: numberAt(item.ry, `${path}.ry`),
+    rz: numberAt(item.rz, `${path}.rz`),
+  };
+}
+
+function parseNodalMass(value: unknown, path: string): NodalMass {
+  const item = objectAt(value, path);
+  return {
+    id: stringAt(item.id, `${path}.id`),
+    nodeId: stringAt(item.nodeId, `${path}.nodeId`),
+    mass: numberAt(item.mass, `${path}.mass`),
   };
 }
 
@@ -444,6 +482,13 @@ function recoverUnknownLoadCaseReferences(
       `model.memberLoads[${index}]`
     );
   });
+  (model.prescribedDisplacements ?? []).forEach((item, index) => {
+    recordReference(
+      item.loadCaseId,
+      `prescribed displacement "${item.id}"`,
+      `model.prescribedDisplacements[${index}]`
+    );
+  });
   (model.loadCombinations ?? []).forEach((combination, combinationIndex) => {
     combination.factors.forEach((factor, factorIndex) => {
       recordReference(
@@ -578,6 +623,16 @@ function parseV2Model(value: unknown, warnings: ImportWarning[]): ProjectModel {
     ),
     memberLoads: arrayAt(model.memberLoads, 'model.memberLoads').map((value, index) =>
       parseMemberLoad(value, `model.memberLoads[${index}]`)
+    ),
+    // Added after schema version 2 shipped; absent in older files.
+    prescribedDisplacements: optionalArrayAt(
+      model.prescribedDisplacements,
+      'model.prescribedDisplacements'
+    ).map((value, index) =>
+      parsePrescribedDisplacement(value, `model.prescribedDisplacements[${index}]`)
+    ),
+    nodeMasses: optionalArrayAt(model.nodeMasses, 'model.nodeMasses').map((value, index) =>
+      parseNodalMass(value, `model.nodeMasses[${index}]`)
     ),
     units: parseUnits(model.units, 'model.units'),
   };

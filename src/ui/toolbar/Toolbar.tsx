@@ -4,6 +4,7 @@ import { useT } from '../../i18n';
 import type { EditTool, DisplayMode } from '../../state/viewStore';
 import type { TKey } from '../../i18n';
 import { redoProject, undoProject, useProjectHistory } from '../../state/projectStore';
+import type { AnalysisKind } from '../../worker/protocol';
 
 const tools: { id: EditTool; labelKey: TKey; icon: string }[] = [
   { id: 'select', labelKey: 'tool.select', icon: '\u2299' },
@@ -17,6 +18,7 @@ const tools: { id: EditTool; labelKey: TKey; icon: string }[] = [
 const displayModes: { id: DisplayMode; labelKey: TKey }[] = [
   { id: 'model', labelKey: 'display.model' },
   { id: 'deformation', labelKey: 'display.deformation' },
+  { id: 'modeShape', labelKey: 'display.modeShape' },
   { id: 'N', labelKey: 'display.N' },
   { id: 'Vy', labelKey: 'display.Vy' },
   { id: 'Vz', labelKey: 'display.Vz' },
@@ -26,7 +28,7 @@ const displayModes: { id: DisplayMode; labelKey: TKey }[] = [
 ];
 
 interface ToolbarProps {
-  onRunAnalysis: () => void;
+  onRunAnalysis: (kind: AnalysisKind) => void;
   onCancelAnalysis: () => void;
   isAnalyzing: boolean;
   onOpenGenerator: () => void;
@@ -81,9 +83,16 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onRunAnalysis, onCancelAnalysi
         ))}
       </div>
 
-      <div className="toolbar-section">
-        <button className={`toolbar-btn ${isAnalyzing ? 'cancel-btn' : 'run-btn'}`} onClick={isAnalyzing ? onCancelAnalysis : onRunAnalysis}>
+      <div className="toolbar-section toolbar-analysis">
+        <div className="toolbar-title">{t('toolbar.analysis')}</div>
+        <button className={`toolbar-btn ${isAnalyzing ? 'cancel-btn' : 'run-btn'}`} onClick={isAnalyzing ? onCancelAnalysis : () => onRunAnalysis('static')}>
           {isAnalyzing ? `■ ${t('results.analyzing')}` : `\u25B6 ${t('toolbar.run')}`}
+        </button>
+        <button className="toolbar-btn" disabled={isAnalyzing} onClick={() => onRunAnalysis('modal')} title={t('toolbar.runModalTitle')}>
+          <span className="toolbar-label">{t('toolbar.runModal')}</span>
+        </button>
+        <button className="toolbar-btn" disabled={isAnalyzing} onClick={() => onRunAnalysis('buckling')} title={t('toolbar.runBucklingTitle')}>
+          <span className="toolbar-label">{t('toolbar.runBuckling')}</span>
         </button>
       </div>
     </div>

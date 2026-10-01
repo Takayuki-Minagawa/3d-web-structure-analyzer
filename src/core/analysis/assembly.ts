@@ -1,8 +1,33 @@
-import type { IndexedModel } from '../model/types';
-import { buildLocalStiffness, applyEndReleases } from './element3dFrame';
+import type { IndexedMember, IndexedModel } from '../model/types';
+import { buildLocalStiffness, applyEndReleases, buildReleaseTransformation } from './element3dFrame';
 import { buildTransformationMatrix, transformToGlobal } from './transforms';
+import { dofValues } from '../model/restraints';
 
 const MEMBER_DOF = 12;
+
+/**
+ * Transform a local 12x12 member matrix to global axes and add it to the
+ * global matrix, redirecting slave DOFs to their master DOFs.
+ */
+function scatterMemberMatrix(
+  global: Float64Array,
+  model: IndexedModel,
+  member: IndexedMember,
+  local: Float64Array
+): void {
+  const n = model.dofCount;
+  const { dofMap } = model;
+  const T = member.transformation ?? buildTransformationMatrix(member);
+  const matrix = transformToGlobal(local, T);
+  const dofs = getMemberDofs(member.ni, member.nj);
+  for (let i = 0; i < MEMBER_DOF; i++) {
+    const gi = dofMap[dofs[i]!]!;
+    for (let j = 0; j < MEMBER_DOF; j++) {
+      const gj = dofMap[dofs[j]!]!;
+      global[gi * n + gj] = global[gi * n + gj]! + matrix[i * MEMBER_DOF + j]!;
+    }
+  }
+}
 
 /**
  * Assemble global stiffness matrix from all element contributions.
@@ -20,27 +45,13 @@ export function assembleGlobalStiffness(model: IndexedModel): Float64Array {
 
     // Apply end releases via static condensation (modifies kLocal in place)
     applyEndReleases(kLocal, member.releases);
-
-    const T = member.transformation ?? buildTransformationMatrix(member);
-    const kGlobal = transformToGlobal(kLocal, T);
-
-    // DOF mapping: member's 12 DOFs -> global DOF indices (with coupling)
-    const dofs = getMemberDofs(member.ni, member.nj);
-
-    // Scatter into global matrix, redirecting slave DOFs to master DOFs
-    for (let i = 0; i < MEMBER_DOF; i++) {
-      const gi = dofMap[dofs[i]!]!;
-      for (let j = 0; j < MEMBER_DOF; j++) {
-        const gj = dofMap[dofs[j]!]!;
-        K[gi * n + gj] = K[gi * n + gj]! + kGlobal[i * MEMBER_DOF + j]!;
-      }
-    }
+    scatterMemberMatrix(K, model, member, kLocal);
   }
 
   // Diagonal support springs are expressed in global nodal DOF order. A
   // spring attached to a coupled slave contributes to the effective master.
   for (const spring of model.nodeSprings) {
-    const stiffnesses = [spring.ux, spring.uy, spring.uz, spring.rx, spring.ry, spring.rz];
+    const stiffnesses = dofValues(spring);
     const base = spring.nodeIndex * 6;
     for (let localDof = 0; localDof < 6; localDof++) {
       const stiffness = stiffnesses[localDof]!;
@@ -52,6 +63,30 @@ export function assembleGlobalStiffness(model: IndexedModel): Float64Array {
   }
 
   return K;
+}
+
+/**
+ * Assemble a global matrix from per-member local 12x12 matrices that are
+ * expressed in the member's own end DOFs (e.g. mass or geometric stiffness).
+ * Released ends are reduced with the same kinematics as the stiffness
+ * condensation, so the result is consistent with `assembleGlobalStiffness`.
+ * Members for which `localMatrix` returns null contribute nothing.
+ */
+export function assembleMemberMatrices(
+  model: IndexedModel,
+  localMatrix: (member: IndexedMember) => Float64Array | null
+): Float64Array {
+  const global = new Float64Array(model.dofCount * model.dofCount);
+  for (const member of model.members) {
+    const local = localMatrix(member);
+    if (!local) continue;
+    const release = buildReleaseTransformation(
+      member.localStiffness ?? buildLocalStiffness(member),
+      member.releases
+    );
+    scatterMemberMatrix(global, model, member, release ? transformToGlobal(local, release) : local);
+  }
+  return global;
 }
 
 /**

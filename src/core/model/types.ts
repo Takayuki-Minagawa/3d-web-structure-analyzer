@@ -115,6 +115,25 @@ export interface UniformMemberLoad {
   value: number; // per unit length
 }
 
+/**
+ * Linearly varying distributed load over the partial span [a, b].
+ * A uniform partial load uses equal intensities; a triangular load uses zero
+ * at one end.
+ */
+export interface TrapezoidalMemberLoad {
+  id: string;
+  loadCaseId?: LoadCaseId;
+  memberId: MemberId;
+  type: 'trapezoid';
+  direction: MemberLoadDirection;
+  /** Intensity per unit length at the start position `a`. */
+  value: number;
+  /** Intensity per unit length at the end position `b`. */
+  valueEnd: number;
+  a: number; // start distance from i-end
+  b: number; // end distance from i-end
+}
+
 export interface CMQMemberLoad {
   id: string;
   loadCaseId?: LoadCaseId;
@@ -163,9 +182,33 @@ export interface SelfWeightMemberLoad {
 export type MemberLoad =
   | PointMemberLoad
   | UniformMemberLoad
+  | TrapezoidalMemberLoad
   | CMQMemberLoad
   | TemperatureMemberLoad
   | SelfWeightMemberLoad;
+
+/**
+ * Prescribed (enforced) displacement of restrained nodal DOFs, e.g. a support
+ * settlement. Components on unrestrained DOFs are rejected by validation.
+ */
+export interface PrescribedDisplacement {
+  id: string;
+  loadCaseId?: LoadCaseId;
+  nodeId: NodeId;
+  ux: number;
+  uy: number;
+  uz: number;
+  rx: number;
+  ry: number;
+  rz: number;
+}
+
+/** Additional lumped translational mass used by eigenvalue (modal) analysis. */
+export interface NodalMass {
+  id: string;
+  nodeId: NodeId;
+  mass: number;
+}
 
 export interface LoadCase {
   id: LoadCaseId;
@@ -228,6 +271,10 @@ export interface ProjectModel {
   gravity?: { x: number; y: number; z: number };
   nodalLoads: NodalLoad[];
   memberLoads: MemberLoad[];
+  /** Optional for backward compatibility with existing project files. */
+  prescribedDisplacements?: PrescribedDisplacement[];
+  /** Optional for backward compatibility with existing project files. */
+  nodeMasses?: NodalMass[];
   units: {
     force: string;
     length: string;
@@ -294,6 +341,7 @@ export interface IndexedModel {
   members: IndexedMember[];
   nodalLoads: NodalLoad[];
   memberLoads: MemberLoad[];
+  prescribedDisplacements: PrescribedDisplacement[];
   nodeSprings: IndexedNodalSpringSupport[];
   gravity: { x: number; y: number; z: number };
   nodeCount: number;
@@ -374,6 +422,66 @@ export interface AnalysisResult {
   elementEndForces: Record<string, number[]>;
   diagrams: Record<string, { memberId: string; points: DiagramPoint[] }>;
   warnings: string[];
+}
+
+/** Normalized deformed shape of one eigenmode (largest translation = 1). */
+export interface ModeShape {
+  /** Displacements of the model's own nodes, 6 per node. */
+  displacements: Float64Array;
+  /** Local deflection samples along each member; section forces are zero. */
+  diagrams: Map<MemberId, DiagramSeries>;
+}
+
+export type DirectionTriple = [x: number, y: number, z: number];
+
+export interface ModalMode {
+  /** 1-based mode number in ascending frequency order. */
+  index: number;
+  /** Circular frequency ω [rad/s]. */
+  omega: number;
+  /** Natural frequency f = ω / 2π [Hz]. */
+  frequency: number;
+  /** Natural period T = 1 / f [s]. */
+  period: number;
+  /** Participation factors for unit-normalized mode shapes, per global direction. */
+  participation: DirectionTriple;
+  /** Effective modal mass divided by the total mass, per global direction. */
+  effectiveMassRatio: DirectionTriple;
+  shape: ModeShape;
+}
+
+export interface ModalAnalysisOutput {
+  modes: ModalMode[];
+  /** Total translational mass per global direction, including supported nodes. */
+  totalMass: DirectionTriple;
+  /** Number of elements each member was subdivided into. */
+  divisions: number;
+  freeDofCount: number;
+  warnings: string[];
+}
+
+export interface BucklingMode {
+  /** 1-based mode number in ascending load-factor order. */
+  index: number;
+  /** Critical multiplier λ of the reference load set. */
+  loadFactor: number;
+  shape: ModeShape;
+}
+
+export interface BucklingAnalysisOutput {
+  modes: BucklingMode[];
+  /** Load case or combination whose axial forces define the reference state. */
+  target: AnalysisTarget;
+  divisions: number;
+  freeDofCount: number;
+  warnings: string[];
+}
+
+export interface EigenAnalysisOptions {
+  /** Number of modes to report. */
+  modeCount?: number;
+  /** Elements per member; 'auto' picks the finest affordable subdivision. */
+  divisions?: number | 'auto';
 }
 
 export type DofName = 'ux' | 'uy' | 'uz' | 'rx' | 'ry' | 'rz';

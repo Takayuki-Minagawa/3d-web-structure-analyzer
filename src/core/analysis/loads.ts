@@ -7,6 +7,7 @@ import type {
   CMQMemberLoad,
   SelfWeightMemberLoad,
   TemperatureMemberLoad,
+  TrapezoidalMemberLoad,
 } from '../model/types';
 import { transformVectorToGlobal, buildTransformationMatrix } from './transforms';
 import { computePhiY, computePhiZ, buildLocalStiffness, applyEndReleasesToForce } from './element3dFrame';
@@ -18,7 +19,37 @@ export interface LocalLoadComponents {
   z: number;
 }
 
+/** Distributed load over [a, b] whose local components vary linearly. */
+export interface LocalDistributedSegment {
+  a: number;
+  b: number;
+  start: LocalLoadComponents;
+  end: LocalLoadComponents;
+}
+
+export type DistributedMemberLoad =
+  | UniformMemberLoad
+  | SelfWeightMemberLoad
+  | TrapezoidalMemberLoad;
+
 const ZERO_GRAVITY = { x: 0, y: 0, z: 0 };
+/** Relative slack for load positions computed from rounded member lengths. */
+const POSITION_TOLERANCE = 1e-9;
+/** 3-point Gauss-Legendre rule on [-1, 1]; exact up to degree 5. */
+const GAUSS_3: ReadonlyArray<readonly [number, number]> = [
+  [-Math.sqrt(0.6), 5 / 9],
+  [0, 8 / 9],
+  [Math.sqrt(0.6), 5 / 9],
+];
+
+/** Integrate f over [a, b] with the 3-point Gauss-Legendre rule. */
+export function integrateGauss3(a: number, b: number, f: (x: number) => number): number {
+  const half = (b - a) / 2;
+  const mid = (a + b) / 2;
+  let sum = 0;
+  for (const [point, weight] of GAUSS_3) sum += weight * f(mid + half * point);
+  return sum * half;
+}
 
 export function groupMemberLoadsByMember(
   loads: readonly MemberLoad[]
@@ -82,6 +113,48 @@ export function resolveDistributedLoadLocalComponents(
     y: massPerLength * gravity.y,
     z: massPerLength * gravity.z,
   });
+}
+
+/**
+ * Resolve any distributed load to a linearly varying local segment. Uniform
+ * and self-weight loads span the whole member with constant intensity.
+ */
+export function resolveDistributedSegment(
+  member: IndexedMember,
+  load: DistributedMemberLoad,
+  gravity: { x: number; y: number; z: number } = ZERO_GRAVITY
+): LocalDistributedSegment {
+  if (load.type !== 'trapezoid') {
+    const components = resolveDistributedLoadLocalComponents(member, load, gravity);
+    return { a: 0, b: member.L, start: components, end: components };
+  }
+  const { L } = member;
+  const tolerance = POSITION_TOLERANCE * Math.max(L, 1);
+  const { a, b } = load;
+  if (
+    !Number.isFinite(a) || !Number.isFinite(b) ||
+    a < -tolerance || b > L + tolerance || !(b > a)
+  ) {
+    throw new RangeError(
+      `分布荷重 ${load.id} の範囲 a=${a}, b=${b} は部材 ${member.id} の範囲 0〜${L} 内で a < b である必要があります。`
+    );
+  }
+  return {
+    a: Math.max(0, a),
+    b: Math.min(L, b),
+    start: directionalComponents(member, load.direction, load.value),
+    end: directionalComponents(member, load.direction, load.valueEnd),
+  };
+}
+
+/** Local load intensity of a segment at position x (zero outside [a, b]). */
+function segmentIntensity(segment: LocalDistributedSegment, x: number): LocalLoadComponents {
+  const ratio = (x - segment.a) / (segment.b - segment.a);
+  return {
+    x: segment.start.x + (segment.end.x - segment.start.x) * ratio,
+    y: segment.start.y + (segment.end.y - segment.start.y) * ratio,
+    z: segment.start.z + (segment.end.z - segment.start.z) * ratio,
+  };
 }
 
 /**
@@ -156,6 +229,42 @@ export function computeUDLFixedEndForces(
   f[4] = -(z * L * L) / 12;  // ry coupling sign flip
   f[8] = (z * L) / 2;
   f[10] = (z * L * L) / 12;  // ry coupling sign flip
+
+  return f;
+}
+
+/**
+ * Compute 12-element fixed-end force vector (local) for a linearly varying
+ * load over a partial span, integrating the load against the Timoshenko
+ * shape functions (a quartic integrand, so the 3-point rule is exact).
+ */
+export function computeTrapezoidFixedEndForces(
+  member: IndexedMember,
+  load: TrapezoidalMemberLoad
+): Float64Array {
+  const f = new Float64Array(12);
+  const { L } = member;
+  if (!Number.isFinite(L) || L <= 0) {
+    throw new RangeError(`部材 ${member.id} の長さが正の有限値ではありません (L=${L})。`);
+  }
+  const segment = resolveDistributedSegment(member, load);
+  const phiY = computePhiY(member);
+  const phiZ = computePhiZ(member);
+  const integrate = (integrand: (x: number, w: LocalLoadComponents) => number): number =>
+    integrateGauss3(segment.a, segment.b, (x) => integrand(x, segmentIntensity(segment, x)));
+  const shapeY = (x: number) => timoshenkoShapeFunctions(x / L, L, phiZ);
+  const shapeZ = (x: number) => timoshenkoShapeFunctions(x / L, L, phiY);
+
+  f[0] = integrate((x, w) => w.x * (1 - x / L));
+  f[6] = integrate((x, w) => w.x * (x / L));
+  f[1] = integrate((x, w) => w.y * shapeY(x)[0]);
+  f[5] = integrate((x, w) => w.y * shapeY(x)[1]);
+  f[7] = integrate((x, w) => w.y * shapeY(x)[2]);
+  f[11] = integrate((x, w) => w.y * shapeY(x)[3]);
+  f[2] = integrate((x, w) => w.z * shapeZ(x)[0]);
+  f[4] = -integrate((x, w) => w.z * shapeZ(x)[1]);  // ry coupling sign flip
+  f[8] = integrate((x, w) => w.z * shapeZ(x)[2]);
+  f[10] = -integrate((x, w) => w.z * shapeZ(x)[3]);  // ry coupling sign flip
 
   return f;
 }
@@ -251,6 +360,8 @@ export function computeMemberLoadFixedEndForces(
     return computePointLoadFixedEndForces(member, load);
   } else if (load.type === 'udl') {
     return computeUDLFixedEndForces(member, load, gravity);
+  } else if (load.type === 'trapezoid') {
+    return computeTrapezoidFixedEndForces(member, load);
   } else if (load.type === 'cmq') {
     return computeCMQFixedEndForces(member, load);
   } else if (load.type === 'temperature') {

@@ -40,6 +40,7 @@ export const HelpDialog: React.FC<Props> = ({ open, onClose }) => {
         t('help.tools.setSupport'),
         t('help.tools.nodalLoad'),
         t('help.tools.memberLoad'),
+        t('help.tools.loadTypes'),
         t('help.tools.editProps'),
       ],
     },
@@ -47,6 +48,9 @@ export const HelpDialog: React.FC<Props> = ({ open, onClose }) => {
       title: t('help.section.analysis'),
       items: [
         t('help.analysis.run'),
+        t('help.analysis.modal'),
+        t('help.analysis.buckling'),
+        t('help.analysis.subdivision'),
         t('help.analysis.display'),
         t('help.analysis.scale'),
         t('help.analysis.results'),
@@ -66,6 +70,7 @@ export const HelpDialog: React.FC<Props> = ({ open, onClose }) => {
       items: [
         t('help.signs.coord'),
         t('help.signs.axial'),
+        t('help.signs.moment'),
         t('help.signs.load'),
         t('help.signs.local'),
         t('help.signs.display'),

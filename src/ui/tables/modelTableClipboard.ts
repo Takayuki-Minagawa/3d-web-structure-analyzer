@@ -9,6 +9,14 @@ import type {
 } from '../../core/model/types';
 import { ensureDisplayNumbers, nextDisplayNumber } from '../../core/model/displayNumbers';
 import { getActiveLoadCaseId, getLoadCases } from '../../core/model/loadCases';
+import {
+  FIXED_RESTRAINT,
+  FREE_RESTRAINT,
+  PINNED_RESTRAINT,
+  ROLLER_Z_RESTRAINT,
+  dofValues,
+  restraintPresetName,
+} from '../../core/model/restraints';
 
 export type ModelTableKind = 'nodes' | 'members' | 'nodalLoads' | 'memberLoads';
 
@@ -18,10 +26,6 @@ export interface TableImportResult {
   warnings: string[];
 }
 
-const FREE: Restraint = { ux: false, uy: false, uz: false, rx: false, ry: false, rz: false };
-const PIN: Restraint = { ux: true, uy: true, uz: true, rx: false, ry: false, rz: false };
-const FIXED: Restraint = { ux: true, uy: true, uz: true, rx: true, ry: true, rz: true };
-const ROLLER_Z: Restraint = { ux: false, uy: false, uz: true, rx: false, ry: false, rz: false };
 
 function id(prefix: string): string {
   const uuid = globalThis.crypto?.randomUUID?.();
@@ -34,6 +38,12 @@ function number(value: string, label: string, row: number): number {
   return parsed;
 }
 
+/** Like `number`, but an empty cell is an error instead of zero. */
+function requiredNumber(value: string | undefined, label: string, row: number): number {
+  if (value === undefined || value === '') throw new Error(`Row ${row}: ${label} is required.`);
+  return number(value, label, row);
+}
+
 function positiveInteger(value: string, label: string, row: number): number {
   const parsed = Number(value.replace(/^[NM]/i, ''));
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -44,10 +54,10 @@ function positiveInteger(value: string, label: string, row: number): number {
 
 function parseRestraint(value: string): Restraint {
   const normalized = value.trim().toLowerCase();
-  if (!normalized || normalized === 'free' || normalized === '自由') return { ...FREE };
-  if (normalized === 'fixed' || normalized === '固定') return { ...FIXED };
-  if (normalized === 'pin' || normalized === 'pinned' || normalized === 'ピン') return { ...PIN };
-  if (normalized === 'roller' || normalized === 'roller-z' || normalized === 'ローラー') return { ...ROLLER_Z };
+  if (!normalized || normalized === 'free' || normalized === '自由') return { ...FREE_RESTRAINT };
+  if (normalized === 'fixed' || normalized === '固定') return { ...FIXED_RESTRAINT };
+  if (normalized === 'pin' || normalized === 'pinned' || normalized === 'ピン') return { ...PINNED_RESTRAINT };
+  if (normalized === 'roller' || normalized === 'roller-z' || normalized === 'ローラー') return { ...ROLLER_Z_RESTRAINT };
   const bits = normalized.split(/[ ,/]+/).filter(Boolean);
   if (bits.length === 6 && bits.every((bit) => bit === '0' || bit === '1')) {
     return {
@@ -59,12 +69,8 @@ function parseRestraint(value: string): Restraint {
 }
 
 export function restraintPreset(restraint: Restraint): string {
-  const bits = [restraint.ux, restraint.uy, restraint.uz, restraint.rx, restraint.ry, restraint.rz];
-  if (bits.every(Boolean)) return 'fixed';
-  if (bits.every((value, index) => value === [true, true, true, false, false, false][index])) return 'pin';
-  if (bits.every((value, index) => value === [false, false, true, false, false, false][index])) return 'roller-z';
-  if (bits.every((value) => !value)) return 'free';
-  return bits.map((value) => value ? '1' : '0').join(' ');
+  return restraintPresetName(restraint)
+    ?? dofValues(restraint).map((value) => value ? '1' : '0').join(' ');
 }
 
 function rows(text: string): string[][] {
@@ -102,7 +108,7 @@ export function importModelTable(
         x: number(cells[1] ?? '', 'X', row),
         y: number(cells[2] ?? '', 'Y', row),
         z: number(cells[3] ?? '', 'Z', row),
-        restraint: cells[4] ? parseRestraint(cells[4]) : existing?.restraint ?? { ...FREE },
+        restraint: cells[4] ? parseRestraint(cells[4]) : existing?.restraint ?? { ...FREE_RESTRAINT },
       };
       byNumber.set(no, node);
     }
@@ -217,6 +223,15 @@ export function importModelTable(
         type: 'point', direction, value, a: number(cells[5] ?? '', 'position a', row),
       };
     }
+    if (type === 'trapezoid') {
+      return {
+        id: id('member-load'), memberId: member.id, loadCaseId,
+        type: 'trapezoid', direction, value,
+        a: requiredNumber(cells[5], 'start a', row),
+        valueEnd: requiredNumber(cells[6], 'end value w2', row),
+        b: requiredNumber(cells[7], 'end b', row),
+      };
+    }
     if (type !== 'udl') throw new Error(`Row ${row}: unsupported member-load type "${type}".`);
     return { id: id('member-load'), memberId: member.id, loadCaseId, type: 'udl', direction, value };
   });
@@ -256,11 +271,14 @@ export function exportModelTable(model: ProjectModel, kind: ModelTableKind): str
     ].map((row) => row.join('\t')).join('\n');
   }
   return [
-    ['Target', 'Case', 'Type', 'Direction/iQx', 'Value/iQy', 'a/iQz', 'iMy', 'iMz', 'jQx', 'jQy', 'jQz', 'jMy', 'jMz', 'moy', 'moz'],
+    ['Target', 'Case', 'Type', 'Direction/iQx', 'Value/iQy', 'a/iQz', 'w2/iMy', 'b/iMz', 'jQx', 'jQy', 'jQz', 'jMy', 'jMz', 'moy', 'moz'],
     ...numbered.memberLoads.map((load) => {
       const prefix = [memberById.get(load.memberId)?.number ?? '', caseById.get(load.loadCaseId ?? '') ?? '', load.type];
       if (load.type === 'cmq') {
         return [...prefix, load.iQx, load.iQy, load.iQz, load.iMy, load.iMz, load.jQx, load.jQy, load.jQz, load.jMy, load.jMz, load.moy, load.moz];
+      }
+      if (load.type === 'trapezoid') {
+        return [...prefix, load.direction, load.value, load.a, load.valueEnd, load.b];
       }
       return [...prefix, load.direction, load.value, load.type === 'point' ? load.a : ''];
     }),

@@ -1,42 +1,52 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { useProjectStore } from '../../state/projectStore';
 import type { AnalysisResultView } from '../../state/projectStore';
 import { useT } from '../../i18n';
 import type { TKey } from '../../i18n';
-import type {
-  AnalysisError,
-  AnalysisResult,
-  DofName,
-  ProjectModel,
-  ReleasedMemberMode,
-  StabilityDiagnostic,
-} from '../../core/model/types';
+import type { AnalysisResult, ProjectModel } from '../../core/model/types';
 import { buildEffectiveReactionRows } from './reactionRows';
 import { memberLabel, nodeLabel } from '../../core/model/displayNumbers';
 import { formatEngineering } from '../../core/formatEngineering';
-import { useSelectionStore } from '../../state/selectionStore';
 import type { SerializedComponentEnvelope } from '../../worker/protocol';
+import { useViewStore, type ResultsTab } from '../../state/viewStore';
+import { AnalysisErrorDetails } from './AnalysisErrorDetails';
+import { EigenResults } from './EigenResults';
 
-type TabId = 'displacements' | 'reactions' | 'endForces';
-type Translate = (key: TKey) => string;
+type StaticTab = Exclude<ResultsTab, 'modal' | 'buckling'>;
 
-const DOF_LABEL_KEYS: Record<DofName, TKey> = {
-  ux: 'results.dof.ux',
-  uy: 'results.dof.uy',
-  uz: 'results.dof.uz',
-  rx: 'results.dof.rx',
-  ry: 'results.dof.ry',
-  rz: 'results.dof.rz',
-};
-
-const RELEASE_LABEL_KEYS: Record<ReleasedMemberMode, TKey> = {
-  localXTwist: 'results.release.localXTwist',
-  localYBending: 'results.release.localYBending',
-  localZBending: 'results.release.localZBending',
-};
+const TABS: ReadonlyArray<{ id: ResultsTab; labelKey: TKey }> = [
+  { id: 'displacements', labelKey: 'results.displacements' },
+  { id: 'reactions', labelKey: 'results.reactions' },
+  { id: 'endForces', labelKey: 'results.endForces' },
+  { id: 'modal', labelKey: 'results.modal' },
+  { id: 'buckling', labelKey: 'results.buckling' },
+];
 
 export const ResultsPanel: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<TabId>('displacements');
+  const activeTab = useViewStore((s) => s.resultsTab);
+  const setActiveTab = useViewStore((s) => s.setResultsTab);
+  const isAnalyzing = useProjectStore((s) => s.isAnalyzing);
+  const t = useT();
+
+  if (isAnalyzing) {
+    return <div className="results-panel"><p>{t('results.analyzing')}</p></div>;
+  }
+
+  return (
+    <div className="results-panel">
+      <div className="tab-bar">
+        {TABS.map((tab) => (
+          <button key={tab.id} className={activeTab === tab.id ? 'active' : ''} onClick={() => setActiveTab(tab.id)}>{t(tab.labelKey)}</button>
+        ))}
+      </div>
+      {activeTab === 'modal' || activeTab === 'buckling'
+        ? <EigenResults kind={activeTab} />
+        : <StaticResults activeTab={activeTab} />}
+    </div>
+  );
+};
+
+const StaticResults: React.FC<{ activeTab: StaticTab }> = ({ activeTab }) => {
   const model = useProjectStore((s) => s.model);
   const result = useProjectStore((s) => s.analysisResult);
   const analysisResults = useProjectStore((s) => s.analysisResults);
@@ -45,7 +55,6 @@ export const ResultsPanel: React.FC = () => {
   const analysisResultView = useProjectStore((s) => s.analysisResultView);
   const selectAnalysisResultView = useProjectStore((s) => s.selectAnalysisResultView);
   const error = useProjectStore((s) => s.analysisError);
-  const isAnalyzing = useProjectStore((s) => s.isAnalyzing);
   const isResultStale = useProjectStore((s) => s.isResultStale);
   const t = useT();
   const targetNames = useMemo(
@@ -74,28 +83,14 @@ export const ResultsPanel: React.FC = () => {
     if (view) selectAnalysisResultView(view);
   };
 
-  if (isAnalyzing) {
-    return <div className="results-panel"><p>{t('results.analyzing')}</p></div>;
-  }
-
-  if (error) {
-    return (
-      <div className="results-panel">
-        <AnalysisErrorDetails error={error} model={model} />
-      </div>
-    );
-  }
-
-  if (!result) {
-    return <div className="results-panel"><p className="muted">{t('results.noResults')}</p></div>;
-  }
-
+  if (error) return <AnalysisErrorDetails error={error} model={model} />;
+  if (!result) return <p className="muted">{t('results.noResults')}</p>;
   if (isResultStale) {
-    return <div className="results-panel"><p className="warning-text">{t('results.stale')}</p><p className="muted">{t('results.staleHidden')}</p></div>;
+    return <><p className="warning-text">{t('results.stale')}</p><p className="muted">{t('results.staleHidden')}</p></>;
   }
 
   return (
-    <div className="results-panel">
+    <>
       {analysisResults.length > 0 && (
         <div className="result-view-controls">
           <label>
@@ -110,11 +105,6 @@ export const ResultsPanel: React.FC = () => {
           {analysisFactorizationCount !== null && <span className="result-factorization">{t('results.factorizationCount').replace('{count}', String(analysisFactorizationCount))}</span>}
         </div>
       )}
-      <div className="tab-bar">
-        <button className={activeTab === 'displacements' ? 'active' : ''} onClick={() => setActiveTab('displacements')}>{t('results.displacements')}</button>
-        <button className={activeTab === 'reactions' ? 'active' : ''} onClick={() => setActiveTab('reactions')}>{t('results.reactions')}</button>
-        <button className={activeTab === 'endForces' ? 'active' : ''} onClick={() => setActiveTab('endForces')}>{t('results.endForces')}</button>
-      </div>
 
       {activeTab === 'displacements' && (
         <div className="table-wrapper">
@@ -180,128 +170,9 @@ export const ResultsPanel: React.FC = () => {
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 };
-
-const AnalysisErrorDetails: React.FC<{ error: AnalysisError; model: ProjectModel }> = ({ error, model }) => {
-  const t = useT();
-  const selectNode = useSelectionStore((state) => state.selectNode);
-  const selectMember = useSelectionStore((state) => state.selectMember);
-  const focusSelection = useSelectionStore((state) => state.focusSelection);
-  const diagnostics = error.diagnostics ?? [];
-  const hasNodeTarget = Boolean(error.nodeId && model.nodes.some((node) => node.id === error.nodeId));
-  const hasMemberTarget = Boolean(error.elementId && model.members.some((member) => member.id === error.elementId));
-  const goToError = () => {
-    if (hasNodeTarget && error.nodeId) selectNode(error.nodeId);
-    else if (hasMemberTarget && error.elementId) selectMember(error.elementId);
-    else return;
-    focusSelection();
-  };
-
-  return (
-    <div className="analysis-error">
-      {hasNodeTarget || hasMemberTarget
-        ? <button className="error-link error-text" onClick={goToError}>{formatAnalysisErrorMessage(error, t)}</button>
-        : <div className="error-text">{formatAnalysisErrorMessage(error, t)}</div>}
-      {diagnostics.length > 0 && (
-        <div className="diagnostics-list">
-          <div className="diagnostics-title">{t('results.diagnostics')}</div>
-          {diagnostics.map((diagnostic, index) => (
-            <DiagnosticItem key={`${diagnostic.kind}-${index}`} diagnostic={diagnostic} model={model} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
-
-const DiagnosticItem: React.FC<{ diagnostic: StabilityDiagnostic; model: ProjectModel }> = ({ diagnostic, model }) => {
-  const t = useT();
-  const selectNode = useSelectionStore((state) => state.selectNode);
-  const selectMember = useSelectionStore((state) => state.selectMember);
-  const focusSelection = useSelectionStore((state) => state.focusSelection);
-  const displayNodeId = diagnostic.nodeId ? nodeLabel(model.nodes.find((node) => node.id === diagnostic.nodeId)) : undefined;
-  const displayMemberId = diagnostic.elementId ? memberLabel(model.members.find((member) => member.id === diagnostic.elementId)) : undefined;
-  const formatted = formatDiagnostic({ ...diagnostic, ...(displayNodeId ? { nodeId: displayNodeId } : {}), ...(displayMemberId ? { elementId: displayMemberId } : {}) }, t);
-  const meta = [
-    displayNodeId ? `${t('results.node')} ${displayNodeId}` : null,
-    displayMemberId ? `${t('results.member')} ${displayMemberId}` : null,
-    diagnostic.dof ? `DOF ${diagnostic.dof}` : null,
-  ].filter((item): item is string => item !== null);
-
-  return (
-    <button className="diagnostic-item diagnostic-button" onClick={() => { if (diagnostic.nodeId) selectNode(diagnostic.nodeId); else if (diagnostic.elementId) selectMember(diagnostic.elementId); else return; focusSelection(); }}>
-      <div>{formatted.message}</div>
-      {meta.length > 0 && <div className="diagnostic-meta">{meta.join(' / ')}</div>}
-      <div className="diagnostic-suggestion">
-        <span>{t('results.diagnosticSuggestion')}</span>
-        {formatted.suggestion}
-      </div>
-    </button>
-  );
-};
-
-function formatAnalysisErrorMessage(error: AnalysisError, t: Translate): string {
-  if (error.type === 'singular') return t('results.error.singular');
-  return error.message;
-}
-
-function formatDiagnostic(
-  diagnostic: StabilityDiagnostic,
-  t: Translate
-): { message: string; suggestion: string } {
-  if (diagnostic.kind === 'singular-pivot') {
-    return {
-      message: formatText(t, 'results.diagnostic.singularPivot.message', {
-        nodeId: diagnostic.nodeId ?? '-',
-        dofLabel: formatDofLabel(diagnostic.dof, t),
-      }),
-      suggestion: t('results.diagnostic.singularPivot.suggestion'),
-    };
-  }
-
-  if (diagnostic.kind === 'zero-stiffness-dof') {
-    return {
-      message: formatText(t, 'results.diagnostic.zeroStiffness.message', {
-        nodeId: diagnostic.nodeId ?? '-',
-        dofLabel: formatDofLabel(diagnostic.dof, t),
-      }),
-      suggestion: t('results.diagnostic.zeroStiffness.suggestion'),
-    };
-  }
-
-  return {
-    message: formatText(t, 'results.diagnostic.releasedMember.message', {
-      memberId: diagnostic.elementId ?? '-',
-      releasedModes: formatReleasedModes(diagnostic, t),
-    }),
-    suggestion: t('results.diagnostic.releasedMember.suggestion'),
-  };
-}
-
-function formatText(
-  t: Translate,
-  key: TKey,
-  values: Record<string, string>
-): string {
-  return Object.entries(values).reduce(
-    (text, [name, value]) => text.split(`{${name}}`).join(value),
-    t(key)
-  );
-}
-
-function formatDofLabel(dof: StabilityDiagnostic['dof'], t: Translate): string {
-  if (!dof) return '-';
-  return t(DOF_LABEL_KEYS[dof]);
-}
-
-function formatReleasedModes(diagnostic: StabilityDiagnostic, t: Translate): string {
-  const released = diagnostic.released ?? [];
-  if (released.length === 0) return '-';
-  const separator = t('results.listSeparator');
-  return released.map((mode) => t(RELEASE_LABEL_KEYS[mode])).join(separator);
-}
 
 function useEffectiveReactions(model: ProjectModel, reactions: number[]) {
   return useMemo(

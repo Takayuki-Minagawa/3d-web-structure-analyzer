@@ -8,6 +8,7 @@ import { buildLocalStiffness, applyEndReleases, applyEndReleasesToForce } from '
 import { buildTransformationMatrix, transformVectorToLocal } from './transforms';
 import { computeMemberLoadFixedEndForces, groupMemberLoadsByMember } from './loads';
 import { getMemberDofs } from './assembly';
+import { dofValues } from '../model/restraints';
 
 const MEMBER_DOF = 12;
 
@@ -37,7 +38,7 @@ export function computeReactions(
   // (correctly) zero there. Report the physical support action separately as
   // -k*u at the spring's source node for equilibrium and result display.
   for (const spring of nodeSprings) {
-    const stiffnesses = [spring.ux, spring.uy, spring.uz, spring.rx, spring.ry, spring.rz];
+    const stiffnesses = dofValues(spring);
     const base = spring.nodeIndex * 6;
     for (let localDof = 0; localDof < 6; localDof++) {
       const sourceDof = base + localDof;

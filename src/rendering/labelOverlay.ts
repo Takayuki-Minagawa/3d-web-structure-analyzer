@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { formatEngineering } from '../core/formatEngineering';
 import { memberLabel, nodeLabel } from '../core/model/displayNumbers';
 import type { AnalysisResult, DiagramPoint, ProjectModel } from '../core/model/types';
-import type { DisplayMode, LabelMode } from '../state/viewStore';
+import { isForceDiagramMode, type DisplayMode, type LabelMode } from '../state/viewStore';
 import { LABEL_FONT, THEME_COLORS } from './constants';
 import { projectToScreen } from './interactionHelpers';
 import { getDiagramLabelPosition, getDiagramValue } from './resultGeometry';
@@ -63,9 +63,7 @@ export class LabelOverlay {
     this.occupied = [];
     if (!options.model) return;
 
-    const diagramLabelsVisible = options.result
-      && options.displayMode !== 'model'
-      && options.displayMode !== 'deformation';
+    const diagramLabelsVisible = options.result && isForceDiagramMode(options.displayMode);
     if (!options.showNodeLabels && !options.showMemberLabels && !diagramLabelsVisible) return;
 
     const colors = options.isDark ? THEME_COLORS.dark : THEME_COLORS.light;

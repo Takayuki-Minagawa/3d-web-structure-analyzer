@@ -233,6 +233,23 @@ export function populateLoads(group: THREE.Group, model: ProjectModel): void {
         const position = pointI.clone().lerp(pointJ, index / segmentCount);
         addArrow(group, position, direction, arrowLength * 0.6, forceColor, headLength, headWidth);
       }
+    } else if (load.type === 'trapezoid') {
+      // Arrow length follows the local intensity so the load shape is visible.
+      const peak = Math.max(Math.abs(load.value), Math.abs(load.valueEnd));
+      if (peak < 1e-12 || axes.length <= 0) continue;
+      const segmentCount = 5;
+      for (let index = 0; index <= segmentCount; index += 1) {
+        const ratio = index / segmentCount;
+        const intensity = load.value + (load.valueEnd - load.value) * ratio;
+        if (Math.abs(intensity) < peak * 1e-6) continue;
+        const position = pointI.clone().lerp(pointJ, (load.a + (load.b - load.a) * ratio) / axes.length);
+        const direction = localDirection(load.direction).multiplyScalar(intensity > 0 ? 1 : -1);
+        const scaledLength = arrowLength * 0.6 * Math.abs(intensity) / peak;
+        addArrow(
+          group, position, direction, scaledLength, forceColor,
+          Math.min(headLength, scaledLength * 0.5), headWidth,
+        );
+      }
     } else if (load.type === 'point') {
       const t = axes.length > 0 ? load.a / axes.length : 0;
       const position = pointI.clone().lerp(pointJ, t);

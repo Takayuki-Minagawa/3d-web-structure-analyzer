@@ -4,6 +4,7 @@ import { useSelectionStore } from '../../state/selectionStore';
 import { getActiveLoadCaseId, getLoadCases } from '../../core/model/loadCases';
 import { memberLabel, nodeLabel } from '../../core/model/displayNumbers';
 import type { MemberLoad, MemberLoadDirection, Restraint } from '../../core/model/types';
+import { restraintFromPreset } from '../../core/model/restraints';
 import { useT, type TKey } from '../../i18n';
 import {
   exportModelTable,
@@ -16,11 +17,6 @@ interface Props {
   open: boolean;
   onClose: () => void;
 }
-
-const FREE: Restraint = { ux: false, uy: false, uz: false, rx: false, ry: false, rz: false };
-const PIN: Restraint = { ux: true, uy: true, uz: true, rx: false, ry: false, rz: false };
-const FIXED: Restraint = { ux: true, uy: true, uz: true, rx: true, ry: true, rz: true };
-const ROLLER_Z: Restraint = { ux: false, uy: false, uz: true, rx: false, ry: false, rz: false };
 
 const TABS: { kind: ModelTableKind; labelKey: TKey }[] = [
   { kind: 'nodes', labelKey: 'table.tab.nodes' },
@@ -42,11 +38,7 @@ function numeric(value: string): number {
 }
 
 function supportFromPreset(value: string, current: Restraint): Restraint {
-  if (value === 'free') return { ...FREE };
-  if (value === 'pin') return { ...PIN };
-  if (value === 'fixed') return { ...FIXED };
-  if (value === 'roller-z') return { ...ROLLER_Z };
-  return current;
+  return restraintFromPreset(value) ?? current;
 }
 
 export const ModelTablePanel: React.FC<Props> = ({ open, onClose }) => {
@@ -199,7 +191,7 @@ export const ModelTablePanel: React.FC<Props> = ({ open, onClose }) => {
           )}
           {tab === 'memberLoads' && (
             <table className="edit-table">
-              <thead><tr><th>{t('table.target')}</th><th>{t('table.case')}</th><th>{t('table.type')}</th><th>{t('table.direction')}</th><th>{t('table.value')}</th><th>a</th><th /></tr></thead>
+              <thead><tr><th>{t('table.target')}</th><th>{t('table.case')}</th><th>{t('table.type')}</th><th>{t('table.direction')}</th><th>{t('table.value')}</th><th>a</th><th>w2</th><th>b</th><th /></tr></thead>
               <tbody>
                 {model.memberLoads.map((load) => (
                   <MemberLoadRow key={load.id} load={load} model={model} memberName={memberLabel(memberById.get(load.memberId))} onSelect={selectAndFocusMember} onUpdate={updateMemberLoad} onRemove={removeMemberLoad} />
@@ -248,6 +240,8 @@ const MemberLoadRow: React.FC<MemberLoadRowProps> = ({ load, model, memberName, 
       : ['localX', 'localY', 'localZ', 'globalX', 'globalY', 'globalZ'];
   const typeLabel = load.type === 'udl'
     ? t('prop.loadTypeUdl')
+    : load.type === 'trapezoid'
+      ? t('prop.loadTypeTrapezoid')
     : load.type === 'point'
       ? t('prop.loadTypePoint')
       : load.type === 'temperature'
@@ -262,7 +256,9 @@ const MemberLoadRow: React.FC<MemberLoadRowProps> = ({ load, model, memberName, 
       <td>{typeLabel}</td>
       <td>{'direction' in load ? <select value={load.direction} disabled={load.type === 'temperature'} onChange={(event) => onUpdate(load.id, { direction: event.target.value as MemberLoadDirection })}>{directions.map((direction) => <option key={direction}>{direction}</option>)}</select> : '—'}</td>
       <td>{'value' in load ? <input type="number" value={value} onChange={(event) => onUpdate(load.id, { value: numeric(event.target.value) })} /> : 'CMQ'}</td>
-      <td>{load.type === 'point' ? <input type="number" value={load.a} onChange={(event) => onUpdate(load.id, { a: numeric(event.target.value) })} /> : '—'}</td>
+      <td>{load.type === 'point' || load.type === 'trapezoid' ? <input type="number" value={load.a} onChange={(event) => onUpdate(load.id, { a: numeric(event.target.value) })} /> : '—'}</td>
+      <td>{load.type === 'trapezoid' ? <input type="number" value={load.valueEnd} onChange={(event) => onUpdate(load.id, { valueEnd: numeric(event.target.value) })} /> : '—'}</td>
+      <td>{load.type === 'trapezoid' ? <input type="number" value={load.b} onChange={(event) => onUpdate(load.id, { b: numeric(event.target.value) })} /> : '—'}</td>
       <td><button className="danger" onClick={(event) => { event.stopPropagation(); onRemove(load.id); }}>×</button></td>
     </tr>
   );

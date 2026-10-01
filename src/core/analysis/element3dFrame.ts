@@ -179,6 +179,65 @@ export function applyEndReleasesToForce(
   condenseEndReleaseSystem(new Float64Array(kOrig), releases, f);
 }
 
+const RIGID_RELEASE: EndRelease = { type: 'rigid', kTheta: 0 };
+
+/**
+ * Kinematic transformation behind the end-release condensation.
+ *
+ * Returns the 12x12 matrix T (row-major) mapping nodal DOFs to the member's
+ * own end DOFs, d_member = T d_node, or null when no end is released. A
+ * released member-end rotation follows from the remaining DOFs as
+ *   θ_member = (kθ θ_node - Σ K[p,r] d_r) / (K[p,p] + kθ)
+ * which is the Guyan reduction consistent with `applyEndReleases`: the
+ * condensed stiffness equals Tᵀ K T plus the spring energy. The same T
+ * reduces mass and geometric stiffness matrices and recovers member-end
+ * rotations of load-free members.
+ */
+export function buildReleaseTransformation(
+  kOrig: Float64Array,
+  releases: readonly EndRelease[]
+): Float64Array | null {
+  if (releases.every((release) => release.type === 'rigid')) return null;
+  const size = 12;
+  const stiffness = new Float64Array(kOrig);
+  const T = new Float64Array(size * size);
+  for (let i = 0; i < size; i++) T[i * size + i] = 1;
+
+  for (let releaseIndex = 0; releaseIndex < releases.length; releaseIndex++) {
+    const release = releases[releaseIndex]!;
+    if (release.type === 'rigid') continue;
+
+    const releasedDof = RELEASE_DOFS[releaseIndex]!;
+    const pivot = stiffness[releasedDof * size + releasedDof]!;
+    if (Math.abs(pivot) < 1e-30) continue;
+    const springStiffness = release.type === 'spring' ? release.kTheta : 0;
+    const denominator = pivot + springStiffness;
+    if (Math.abs(denominator) < 1e-30) continue;
+
+    // Row p of this step's transformation; all other rows are identity.
+    const stepRow = new Float64Array(size);
+    for (let column = 0; column < size; column++) {
+      stepRow[column] = column === releasedDof
+        ? springStiffness / denominator
+        : -stiffness[releasedDof * size + column]! / denominator;
+    }
+    // T <- T * T_step
+    for (let row = 0; row < size; row++) {
+      const factor = T[row * size + releasedDof]!;
+      if (factor === 0) continue;
+      T[row * size + releasedDof] = 0;
+      for (let column = 0; column < size; column++) {
+        T[row * size + column] = T[row * size + column]! + factor * stepRow[column]!;
+      }
+    }
+
+    // Advance the working stiffness by exactly this one release.
+    const single = releases.map((item, index) => (index === releaseIndex ? item : RIGID_RELEASE));
+    condenseEndReleaseSystem(stiffness, single);
+  }
+  return T;
+}
+
 /**
  * Condense an augmented local system [K | f] in one sequential pass.
  * Passing no force vector condenses K only.

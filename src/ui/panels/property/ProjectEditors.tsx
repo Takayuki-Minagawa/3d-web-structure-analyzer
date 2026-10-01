@@ -3,9 +3,11 @@ import type { AnalysisMode } from '../../../core/model/types';
 import { get2dModeConfig, getAnalysisMode } from '../../../core/model/analysisMode';
 import { getActiveLoadCaseId, getLoadCases, getLoadCombinations } from '../../../core/model/loadCases';
 import { nodeLabel } from '../../../core/model/displayNumbers';
+import { DOF_NAMES } from '../../../core/model/restraints';
 import { useT } from '../../../i18n';
 import { useProjectStore, type AnalysisModeUpdateResult } from '../../../state/projectStore';
 import { useSelectionStore } from '../../../state/selectionStore';
+import { useViewStore, type EigenDivisions } from '../../../state/viewStore';
 
 export const AnalysisSettingsEditor: React.FC = () => {
   const t = useT();
@@ -13,6 +15,10 @@ export const AnalysisSettingsEditor: React.FC = () => {
   const setAnalysisMode = useProjectStore((state) => state.setAnalysisMode);
   const flattenNodesTo2dPlane = useProjectStore((state) => state.flattenNodesTo2dPlane);
   const [error, setError] = React.useState<Extract<AnalysisModeUpdateResult, { ok: false }> | null>(null);
+  const eigenModeCount = useViewStore((state) => state.eigenModeCount);
+  const eigenDivisions = useViewStore((state) => state.eigenDivisions);
+  const setEigenModeCount = useViewStore((state) => state.setEigenModeCount);
+  const setEigenDivisions = useViewStore((state) => state.setEigenDivisions);
   const mode = getAnalysisMode(model);
   const errorConfig = error ? get2dModeConfig(error.mode) : null;
   const errorMessage = error && errorConfig
@@ -27,6 +33,10 @@ export const AnalysisSettingsEditor: React.FC = () => {
     <div className="prop-row"><label>{t('prop.analysisMode')}</label><select value={mode} onChange={(event) => { const next = event.target.value as AnalysisMode; const result = setAnalysisMode(next); setError(result.ok ? null : result); }}><option value="3d">{t('prop.analysisMode3d')}</option><option value="xz2d">{t('prop.analysisModeXz2d')}</option><option value="xy2d">{t('prop.analysisModeXy2d')}</option><option value="yz2d">{t('prop.analysisModeYz2d')}</option></select></div>
     {error && <><div className="warning-text">{errorMessage}</div><button className="small" onClick={() => { flattenNodesTo2dPlane(error.mode); const result = setAnalysisMode(error.mode); if (result.ok) setError(null); }}>{t('prop.switchAfterFlatten')}</button></>}
     {get2dModeConfig(mode) && <div className="muted">{t('prop.outOfPlaneLocked')}</div>}
+    <div className="prop-title">{t('prop.eigenSettings')}</div>
+    <div className="prop-row"><label>{t('prop.eigenModeCount')}</label><input type="number" min="1" max="30" step="1" value={eigenModeCount} onChange={(event) => { const value = event.target.valueAsNumber; if (Number.isFinite(value)) setEigenModeCount(value); }} /></div>
+    <div className="prop-row"><label>{t('prop.eigenDivisions')}</label><select value={String(eigenDivisions)} onChange={(event) => setEigenDivisions(event.target.value === 'auto' ? 'auto' : Number(event.target.value) as EigenDivisions)}><option value="auto">{t('prop.eigenDivisionsAuto')}</option>{[1, 2, 4, 8].map((count) => <option key={count} value={count}>{count}</option>)}</select></div>
+    <div className="muted">{t('prop.eigenDivisionsNote')}</div>
   </div>;
 };
 
@@ -80,13 +90,12 @@ export const CouplingsEditor: React.FC = () => {
   const addCoupling = useProjectStore((state) => state.addCoupling);
   const updateCoupling = useProjectStore((state) => state.updateCoupling);
   const removeCoupling = useProjectStore((state) => state.removeCoupling);
-  const dofs = ['ux', 'uy', 'uz', 'rx', 'ry', 'rz'] as const;
   return <div className="project-editor">
     {(model.couplings ?? []).length === 0 && <div className="muted">{t('prop.noCouplings')}</div>}
     {(model.couplings ?? []).map((coupling) => <div className="editable-item" key={coupling.id}>
       <div className="prop-row"><label>{t('prop.masterNode')}</label><select value={coupling.masterNodeId} onChange={(event) => updateCoupling(coupling.id, { masterNodeId: event.target.value })}>{model.nodes.map((node) => <option key={node.id} value={node.id}>{nodeLabel(node)}</option>)}</select></div>
       <div className="prop-row"><label>{t('prop.slaveNode')}</label><select value={coupling.slaveNodeId} onChange={(event) => updateCoupling(coupling.id, { slaveNodeId: event.target.value })}>{model.nodes.map((node) => <option key={node.id} value={node.id}>{nodeLabel(node)}</option>)}</select></div>
-      <div className="dof-grid">{dofs.map((dof) => <label key={dof}><input type="checkbox" checked={coupling[dof]} onChange={(event) => updateCoupling(coupling.id, { [dof]: event.target.checked })} />{dof}</label>)}</div>
+      <div className="dof-grid">{DOF_NAMES.map((dof) => <label key={dof}><input type="checkbox" checked={coupling[dof]} onChange={(event) => updateCoupling(coupling.id, { [dof]: event.target.checked })} />{dof}</label>)}</div>
       <button className="danger small" onClick={() => removeCoupling(coupling.id)}>{t('prop.delete')}</button>
     </div>)}
     <div className="prop-actions"><button disabled={model.nodes.length < 2} onClick={() => { const master = model.nodes[0]; const slave = model.nodes[1]; if (master && slave) addCoupling({ masterNodeId: master.id, slaveNodeId: slave.id, ux: true, uy: true, uz: true, rx: false, ry: false, rz: false }); }}>{t('prop.addCoupling')}</button></div>

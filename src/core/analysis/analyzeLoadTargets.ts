@@ -1,5 +1,5 @@
 import type {
-  AnalysisError,
+  AnalysisTarget,
   AnalysisTargetResult,
   ComponentEnvelope,
   IndexedModel,
@@ -10,38 +10,21 @@ import type {
 import { buildIndexedModel } from '../model/indexing';
 import { validateModel } from '../model/validation';
 import { getAnalysisTargets, resolveLoadTargetModel } from '../model/loadCases';
-import { assembleGlobalStiffness } from './assembly';
-import { buildGlobalForceVector } from './loads';
-import { partitionDofs, extractFreeSystem } from './constraints';
-import {
-  factorLDLt,
-  SingularMatrixError,
-  solveLDLtMultiple,
-} from './solverDense';
-import {
-  completeAnalysisOutput,
-  createAnalysisException,
-} from './analyzeFrame';
-import { createSingularStabilityDiagnostics } from './stabilityDiagnostics';
+import { toAnalysisException } from './analysisError';
+import { prepareStaticSystem, solveStaticLoadSet } from './staticSolver';
 
-function errorDetails(error: AnalysisError): Pick<AnalysisError, 'elementId' | 'nodeId' | 'diagnostics'> {
-  const details: Pick<AnalysisError, 'elementId' | 'nodeId' | 'diagnostics'> = {};
-  if (error.elementId !== undefined) details.elementId = error.elementId;
-  if (error.nodeId !== undefined) details.nodeId = error.nodeId;
-  if (error.diagnostics !== undefined) details.diagnostics = error.diagnostics;
-  return details;
-}
-
-function targetIndexedModel(
+/** Swap the load-carrying fields of an indexed model for one analysis target. */
+export function indexedModelForTarget(
   base: IndexedModel,
   source: ProjectModel,
-  target: ReturnType<typeof getAnalysisTargets>[number]
+  target: AnalysisTarget
 ): IndexedModel {
   const targetModel = resolveLoadTargetModel(source, target);
   return {
     ...base,
     nodalLoads: targetModel.nodalLoads,
     memberLoads: targetModel.memberLoads,
+    prescribedDisplacements: targetModel.prescribedDisplacements ?? [],
   };
 }
 
@@ -87,68 +70,14 @@ function createEnvelope(
  */
 export function analyzeAllLoadTargets(model: ProjectModel): MultiTargetAnalysisOutput {
   const validationError = validateModel(model)[0];
-  if (validationError) {
-    throw createAnalysisException(
-      validationError.type,
-      validationError.message,
-      errorDetails(validationError)
-    );
-  }
+  if (validationError) throw toAnalysisException(validationError);
 
   const indexed = buildIndexedModel(model);
-  const K = assembleGlobalStiffness(indexed);
-  const { freeDofs, fixedDofs } = partitionDofs(indexed);
-  const targets = getAnalysisTargets(model);
-  const targetModels = targets.map((target) => targetIndexedModel(indexed, model, target));
-  const forceVectors = targetModels.map((targetModel) => buildGlobalForceVector(targetModel));
-
-  let factorizationCount = 0;
-  let freeDisplacements: Float64Array[];
-  if (freeDofs.length === 0) {
-    freeDisplacements = targets.map(() => new Float64Array(0));
-  } else {
-    const { Kff } = extractFreeSystem(
-      K,
-      new Float64Array(indexed.dofCount),
-      freeDofs,
-      indexed.dofCount
-    );
-    try {
-      const factorization = factorLDLt(Kff, freeDofs.length);
-      factorizationCount = 1;
-      const rightHandSides = forceVectors.map((force) => {
-        const rhs = new Float64Array(freeDofs.length);
-        for (let i = 0; i < freeDofs.length; i++) rhs[i] = force[freeDofs[i]!]!;
-        return rhs;
-      });
-      freeDisplacements = solveLDLtMultiple(factorization, rightHandSides);
-    } catch (error) {
-      const diagnostics = error instanceof SingularMatrixError
-        ? createSingularStabilityDiagnostics(indexed, K, freeDofs, error.pivotIndex)
-        : createSingularStabilityDiagnostics(indexed, K, freeDofs);
-      throw createAnalysisException(
-        'singular',
-        error instanceof Error
-          ? error.message
-          : '剛性マトリクスが特異です。拘束条件を確認してください。',
-        { diagnostics }
-      );
-    }
-  }
-
-  const results: AnalysisTargetResult[] = targets.map((target, targetIndex) => {
-    const displacement = new Float64Array(indexed.dofCount);
-    const free = freeDisplacements[targetIndex]!;
-    for (let i = 0; i < freeDofs.length; i++) displacement[freeDofs[i]!] = free[i]!;
-    const output = completeAnalysisOutput(
-      targetModels[targetIndex]!,
-      K,
-      forceVectors[targetIndex]!,
-      displacement,
-      fixedDofs
-    );
-    return { ...output, target };
-  });
+  const system = prepareStaticSystem(indexed);
+  const results: AnalysisTargetResult[] = getAnalysisTargets(model).map((target) => ({
+    ...solveStaticLoadSet(system, indexedModelForTarget(indexed, model, target)),
+    target,
+  }));
 
   const targetIds = results.map((result) => result.target.id);
   const elementEndForces = new Map<MemberId, ComponentEnvelope>();
@@ -172,9 +101,6 @@ export function analyzeAllLoadTargets(model: ProjectModel): MultiTargetAnalysisO
       ),
       elementEndForces,
     },
-    factorizationCount,
+    factorizationCount: system.factorization ? 1 : 0,
   };
 }
-
-/** More discoverable alias for clients that primarily think in load cases. */
-export const analyzeAllLoadCases = analyzeAllLoadTargets;

@@ -179,6 +179,7 @@ export function buildIndexedModel(model: ProjectModel): IndexedModel {
     members,
     nodalLoads: model.nodalLoads,
     memberLoads: model.memberLoads,
+    prescribedDisplacements: model.prescribedDisplacements ?? [],
     nodeSprings,
     gravity: { ...gravity },
     nodeCount,

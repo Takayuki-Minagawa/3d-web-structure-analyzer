@@ -36,7 +36,7 @@ function simplySupportedBeam(loads: MemberLoad[]): ProjectModel {
 }
 
 describe('member-load diagrams', () => {
-  it('recovers wL²/8 and the symmetric one-element deflection for a simple beam UDL', () => {
+  it('recovers wL²/8 and the exact 5wL⁴/384EI deflection for a simple beam UDL', () => {
     const w = -10;
     const model = simplySupportedBeam([
       { id: 'udl', memberId: 'beam', type: 'udl', direction: 'localY', value: w },
@@ -49,8 +49,9 @@ describe('member-load diagrams', () => {
     const { Iz } = model.sections[0]!;
 
     expect(Math.abs(midpoint.Mz)).toBeCloseTo(Math.abs(w) * length ** 2 / 8, 10);
-    // Cubic FE interpolation from the solved end rotations (one beam element).
-    expect(midpoint.uy).toBeCloseTo(w * length ** 4 / (96 * E * Iz), 10);
+    // The member deflection integrates the actual curvature, so a single
+    // element reproduces the closed-form mid-span deflection.
+    expect(midpoint.uy).toBeCloseTo(5 * w * length ** 4 / (384 * E * Iz), 10);
     expect(Math.abs(midpoint.uy)).toBeCloseTo(
       Math.max(...diagram.points.map((point) => Math.abs(point.uy))),
       12

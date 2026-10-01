@@ -11,17 +11,24 @@ import type {
   CouplingConstraint,
   AnalysisError,
   AnalysisResult,
-  Restraint,
   AnalysisMode,
   LoadCase,
   LoadCombination,
+  NodalMass,
   NodalSpringSupport,
+  PrescribedDisplacement,
 } from '../core/model/types';
-import type {
-  AnalyzeAllSuccess,
-  SerializedTargetResult,
-  WorkerResponse,
-} from '../worker/protocol';
+import {
+  NO_EIGEN_ERRORS,
+  targetResultToAnalysisResult,
+  type EigenAnalysisKind,
+  type StoredEigenErrors,
+  type StaticAnalysisOutcome,
+  type StoredBucklingResult,
+  type StoredEnvelope,
+  type StoredModalResult,
+  type StoredTargetResult,
+} from './analysisResults';
 import { importJsonTextAuto, type JsonImportResult } from '../io/jsonImporter';
 import {
   DEFAULT_ANALYSIS_MODE,
@@ -45,6 +52,7 @@ import {
   ensureDisplayNumbers,
   nextDisplayNumber,
 } from '../core/model/displayNumbers';
+import { FREE_RESTRAINT } from '../core/model/restraints';
 
 /** Distributive Omit that works correctly with union types */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
@@ -52,11 +60,6 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : n
 function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
 }
-
-const DEFAULT_RESTRAINT: Restraint = {
-  ux: false, uy: false, uz: false,
-  rx: false, ry: false, rz: false,
-};
 
 export type AnalysisModeUpdateResult =
   | { ok: true }
@@ -125,6 +128,13 @@ export function normalizeProjectModel(model: ProjectModel): ProjectModel {
         ? load.loadCaseId
         : fallbackLoadCaseId,
     })),
+    prescribedDisplacements: (model.prescribedDisplacements ?? []).map((item) => ({
+      ...item,
+      loadCaseId: item.loadCaseId && loadCaseIds.has(item.loadCaseId)
+        ? item.loadCaseId
+        : fallbackLoadCaseId,
+    })),
+    nodeMasses: model.nodeMasses ?? [],
   });
 }
 
@@ -151,7 +161,79 @@ export function createDefaultModel(): ProjectModel {
     gravity: { x: 0, y: 0, z: 0 },
     nodalLoads: [],
     memberLoads: [],
+    prescribedDisplacements: [],
+    nodeMasses: [],
     units: { force: 'kN', length: 'cm', moment: 'kN·cm' },
+  };
+}
+
+type NodePlacement = (node: StructuralNode) => CoordinateOffset;
+
+/**
+ * Copy the selected nodes and the members fully contained in the selection,
+ * once per placement. Members pull their end nodes into the selection.
+ */
+function cloneSelection(
+  model: ProjectModel,
+  nodeIds: readonly string[],
+  memberIds: readonly string[],
+  placements: readonly NodePlacement[],
+): { model: ProjectModel; result: SelectionCloneResult } | null {
+  const selectedNodeIds = new Set(nodeIds);
+  const selectedMemberIds = new Set(memberIds);
+  const sourceMembers = model.members.filter((member) => selectedMemberIds.has(member.id));
+  for (const member of sourceMembers) {
+    selectedNodeIds.add(member.ni);
+    selectedNodeIds.add(member.nj);
+  }
+  const sourceNodes = model.nodes.filter((node) => selectedNodeIds.has(node.id));
+  if (sourceNodes.length === 0) return null;
+
+  const newNodes: StructuralNode[] = [];
+  const newMembers: Member[] = [];
+  const mode = getAnalysisMode(model);
+  let nodeNumber = nextDisplayNumber(model.nodes);
+  let memberNumber = nextDisplayNumber(model.members);
+
+  for (const placement of placements) {
+    const nodeIdMap = new Map<string, string>();
+    for (const node of sourceNodes) {
+      const id = generateId();
+      nodeIdMap.set(node.id, id);
+      newNodes.push(lockNodeToAnalysisPlane({
+        ...node,
+        id,
+        number: nodeNumber++,
+        ...placement(node),
+        restraint: { ...node.restraint },
+      }, mode));
+    }
+    for (const member of sourceMembers) {
+      const ni = nodeIdMap.get(member.ni);
+      const nj = nodeIdMap.get(member.nj);
+      if (!ni || !nj) continue;
+      newMembers.push({
+        ...member,
+        id: generateId(),
+        number: memberNumber++,
+        ni,
+        nj,
+        iSprings: { ...member.iSprings },
+        jSprings: { ...member.jSprings },
+      });
+    }
+  }
+
+  return {
+    model: {
+      ...model,
+      nodes: [...model.nodes, ...newNodes],
+      members: [...model.members, ...newMembers],
+    },
+    result: {
+      nodeIds: newNodes.map((node) => node.id),
+      memberIds: newMembers.map((member) => member.id),
+    },
   };
 }
 
@@ -163,11 +245,14 @@ function replacementState(
   return {
     model: normalizeProjectModel(model),
     analysisResult: null,
-    analysisResults: [] as AnalyzeAllSuccess['results'],
+    analysisResults: [] as StoredTargetResult[],
     analysisEnvelope: null,
     analysisFactorizationCount: null,
     analysisResultView: null,
     analysisError: null,
+    modalResult: null,
+    bucklingResult: null,
+    eigenErrors: NO_EIGEN_ERRORS,
     isAnalyzing: false,
     isResultStale: false,
     fitViewVersion: fitViewVersion + 1,
@@ -175,26 +260,18 @@ function replacementState(
   } as const;
 }
 
-function targetResultToAnalysisResult(
-  result: SerializedTargetResult<number[]>,
-): AnalysisResult {
-  return {
-    displacements: result.displacements,
-    reactions: result.reactions,
-    elementEndForces: result.elementEndForces,
-    diagrams: result.diagrams,
-    warnings: result.warnings,
-  };
-}
-
 interface ProjectState {
   model: ProjectModel;
   analysisResult: AnalysisResult | null;
-  analysisResults: AnalyzeAllSuccess['results'];
-  analysisEnvelope: AnalyzeAllSuccess['envelope'] | null;
+  analysisResults: StoredTargetResult[];
+  analysisEnvelope: StoredEnvelope | null;
   analysisFactorizationCount: number | null;
   analysisResultView: AnalysisResultView | null;
   analysisError: AnalysisError | null;
+  /** Eigen results and errors stay bound to the model object they belong to. */
+  modalResult: StoredModalResult | null;
+  bucklingResult: StoredBucklingResult | null;
+  eigenErrors: StoredEigenErrors;
   isAnalyzing: boolean;
   isResultStale: boolean;
   /** Incremented when a full model load occurs and the view should fit to new content. */
@@ -236,6 +313,12 @@ interface ProjectState {
   updateMemberLoad: (id: string, updates: Partial<DistributiveOmit<MemberLoad, 'id'>>) => void;
   replaceMemberLoad: (id: string, load: DistributiveOmit<MemberLoad, 'id'>) => void;
   removeMemberLoad: (id: string) => void;
+  addPrescribedDisplacement: (item: Omit<PrescribedDisplacement, 'id'>) => string;
+  updatePrescribedDisplacement: (id: string, updates: Partial<Omit<PrescribedDisplacement, 'id'>>) => void;
+  removePrescribedDisplacement: (id: string) => void;
+  addNodeMass: (item: Omit<NodalMass, 'id'>) => string;
+  updateNodeMass: (id: string, updates: Partial<Omit<NodalMass, 'id'>>) => void;
+  removeNodeMass: (id: string) => void;
 
   // Load cases
   addLoadCase: (name?: string) => string;
@@ -254,7 +337,10 @@ interface ProjectState {
 
   // Analysis
   setAnalyzing: (v: boolean) => void;
-  setAnalysisResult: (resp: WorkerResponse | AnalyzeAllSuccess) => void;
+  setAnalysisResult: (outcome: StaticAnalysisOutcome) => void;
+  setModalResult: (result: StoredModalResult) => void;
+  setBucklingResult: (result: StoredBucklingResult) => void;
+  setEigenError: (kind: EigenAnalysisKind, error: AnalysisError, sourceModel: ProjectModel) => void;
   selectAnalysisResultView: (view: AnalysisResultView) => void;
   markResultStale: () => void;
   setAnalysisMode: (mode: AnalysisMode) => AnalysisModeUpdateResult;
@@ -276,6 +362,22 @@ interface ProjectState {
 
 type ProjectHistoryState = Pick<ProjectState, 'model'>;
 
+function applySelectionClone(
+  set: (update: (state: ProjectState) => Partial<ProjectState>) => void,
+  nodeIds: readonly string[],
+  memberIds: readonly string[],
+  placements: readonly NodePlacement[],
+): SelectionCloneResult {
+  let result: SelectionCloneResult = { nodeIds: [], memberIds: [] };
+  set((s) => {
+    const cloned = cloneSelection(s.model, nodeIds, memberIds, placements);
+    if (!cloned) return {};
+    result = cloned.result;
+    return { model: cloned.model, isResultStale: true };
+  });
+  return result;
+}
+
 export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
   model: createDefaultModel(),
   analysisResult: null,
@@ -284,6 +386,9 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
   analysisFactorizationCount: null,
   analysisResultView: null,
   analysisError: null,
+  modalResult: null,
+  bucklingResult: null,
+  eigenErrors: NO_EIGEN_ERRORS,
   isAnalyzing: false,
   isResultStale: false,
   fitViewVersion: 0,
@@ -303,7 +408,7 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
               x,
               y,
               z,
-              restraint: { ...DEFAULT_RESTRAINT },
+              restraint: { ...FREE_RESTRAINT },
             },
             getAnalysisMode(s.model)
           ),
@@ -314,19 +419,7 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
     return id;
   },
 
-  updateNode: (id, updates) => {
-    set((s) => ({
-      model: {
-        ...s.model,
-        nodes: s.model.nodes.map((n) =>
-          n.id === id
-            ? lockNodeToAnalysisPlane({ ...n, ...updates }, getAnalysisMode(s.model))
-            : n
-        ),
-      },
-      isResultStale: true,
-    }));
-  },
+  updateNode: (id, updates) => get().updateNodes([id], updates),
 
   updateNodes: (ids, updates) => {
     const selected = new Set(ids);
@@ -358,6 +451,9 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
           memberLoads: s.model.memberLoads.filter((l) => !removedMemberIds.has(l.memberId)),
           couplings: s.model.couplings.filter((c) => c.masterNodeId !== id && c.slaveNodeId !== id),
           nodeSprings: (s.model.nodeSprings ?? []).filter((spring) => spring.nodeId !== id),
+          prescribedDisplacements: (s.model.prescribedDisplacements ?? [])
+            .filter((item) => item.nodeId !== id),
+          nodeMasses: (s.model.nodeMasses ?? []).filter((item) => item.nodeId !== id),
         },
         isResultStale: true,
       };
@@ -418,25 +514,7 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
     return id;
   },
 
-  updateMember: (id, updates) => {
-    set((s) => ({
-      model: {
-        ...s.model,
-        members: s.model.members.map((m) =>
-          m.id === id
-            ? {
-                ...m,
-                ...updates,
-                torsionRestraint: updates.torsionRestraint !== undefined
-                  ? normalizeTorsionRestraint(updates.torsionRestraint)
-                  : normalizeTorsionRestraint(m.torsionRestraint),
-              }
-            : m
-        ),
-      },
-      isResultStale: true,
-    }));
-  },
+  updateMember: (id, updates) => get().updateMembers([id], updates),
 
   updateMembers: (ids, updates) => {
     const selected = new Set(ids);
@@ -472,144 +550,19 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
   },
 
   duplicateSelection: (nodeIds, memberIds, offset, copies = 1) => {
-    let result: SelectionCloneResult = { nodeIds: [], memberIds: [] };
     const copyCount = Math.max(1, Math.floor(copies));
-    set((s) => {
-      const selectedNodeIds = new Set(nodeIds);
-      const selectedMemberIds = new Set(memberIds);
-      for (const member of s.model.members) {
-        if (!selectedMemberIds.has(member.id)) continue;
-        selectedNodeIds.add(member.ni);
-        selectedNodeIds.add(member.nj);
-      }
-
-      const sourceNodes = s.model.nodes.filter((node) => selectedNodeIds.has(node.id));
-      const sourceMembers = s.model.members.filter((member) =>
-        selectedMemberIds.has(member.id) &&
-        selectedNodeIds.has(member.ni) &&
-        selectedNodeIds.has(member.nj)
-      );
-      if (sourceNodes.length === 0) return {};
-
-      const newNodes: StructuralNode[] = [];
-      const newMembers: Member[] = [];
-      const newNodeIds: string[] = [];
-      const newMemberIds: string[] = [];
-      const mode = getAnalysisMode(s.model);
-      let nodeNumber = nextDisplayNumber(s.model.nodes);
-      let memberNumber = nextDisplayNumber(s.model.members);
-
-      for (let copyIndex = 1; copyIndex <= copyCount; copyIndex++) {
-        const nodeIdMap = new Map<string, string>();
-        for (const node of sourceNodes) {
-          const id = generateId();
-          nodeIdMap.set(node.id, id);
-          newNodeIds.push(id);
-          newNodes.push(lockNodeToAnalysisPlane({
-            ...node,
-            id,
-            number: nodeNumber++,
-            x: node.x + offset.x * copyIndex,
-            y: node.y + offset.y * copyIndex,
-            z: node.z + offset.z * copyIndex,
-            restraint: { ...node.restraint },
-          }, mode));
-        }
-        for (const member of sourceMembers) {
-          const ni = nodeIdMap.get(member.ni);
-          const nj = nodeIdMap.get(member.nj);
-          if (!ni || !nj) continue;
-          const id = generateId();
-          newMemberIds.push(id);
-          newMembers.push({
-            ...member,
-            id,
-            number: memberNumber++,
-            ni,
-            nj,
-            iSprings: { ...member.iSprings },
-            jSprings: { ...member.jSprings },
-          });
-        }
-      }
-
-      result = { nodeIds: newNodeIds, memberIds: newMemberIds };
-      return {
-        model: {
-          ...s.model,
-          nodes: [...s.model.nodes, ...newNodes],
-          members: [...s.model.members, ...newMembers],
-        },
-        isResultStale: true,
-      };
-    });
-    return result;
+    const placements = Array.from({ length: copyCount }, (_, index): NodePlacement => (node) => ({
+      x: node.x + offset.x * (index + 1),
+      y: node.y + offset.y * (index + 1),
+      z: node.z + offset.z * (index + 1),
+    }));
+    return applySelectionClone(set, nodeIds, memberIds, placements);
   },
 
-  mirrorSelection: (nodeIds, memberIds, axis) => {
-    let result: SelectionCloneResult = { nodeIds: [], memberIds: [] };
-    set((s) => {
-      const selectedNodeIds = new Set(nodeIds);
-      const selectedMemberIds = new Set(memberIds);
-      for (const member of s.model.members) {
-        if (!selectedMemberIds.has(member.id)) continue;
-        selectedNodeIds.add(member.ni);
-        selectedNodeIds.add(member.nj);
-      }
-
-      const sourceNodes = s.model.nodes.filter((node) => selectedNodeIds.has(node.id));
-      const sourceMembers = s.model.members.filter((member) =>
-        selectedMemberIds.has(member.id) &&
-        selectedNodeIds.has(member.ni) &&
-        selectedNodeIds.has(member.nj)
-      );
-      if (sourceNodes.length === 0) return {};
-
-      const nodeIdMap = new Map<string, string>();
-      const mode = getAnalysisMode(s.model);
-      let nodeNumber = nextDisplayNumber(s.model.nodes);
-      let memberNumber = nextDisplayNumber(s.model.members);
-      const newNodes = sourceNodes.map((node) => {
-        const id = generateId();
-        nodeIdMap.set(node.id, id);
-        return lockNodeToAnalysisPlane({
-          ...node,
-          id,
-          number: nodeNumber++,
-          [axis]: -node[axis],
-          restraint: { ...node.restraint },
-        }, mode);
-      });
-      const newMembers = sourceMembers.flatMap((member) => {
-        const ni = nodeIdMap.get(member.ni);
-        const nj = nodeIdMap.get(member.nj);
-        if (!ni || !nj) return [];
-        return [{
-          ...member,
-          id: generateId(),
-          number: memberNumber++,
-          ni,
-          nj,
-          iSprings: { ...member.iSprings },
-          jSprings: { ...member.jSprings },
-        }];
-      });
-
-      result = {
-        nodeIds: newNodes.map((node) => node.id),
-        memberIds: newMembers.map((member) => member.id),
-      };
-      return {
-        model: {
-          ...s.model,
-          nodes: [...s.model.nodes, ...newNodes],
-          members: [...s.model.members, ...newMembers],
-        },
-        isResultStale: true,
-      };
-    });
-    return result;
-  },
+  mirrorSelection: (nodeIds, memberIds, axis) =>
+    applySelectionClone(set, nodeIds, memberIds, [
+      (node) => ({ x: node.x, y: node.y, z: node.z, [axis]: -node[axis] }),
+    ]),
 
   addMaterial: (mat) => {
     const id = generateId();
@@ -640,6 +593,7 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
         ...s.model,
         materials: s.model.materials.filter((m) => m.id !== id),
       },
+      isResultStale: true,
     }));
   },
 
@@ -672,6 +626,7 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
         ...s.model,
         sections: s.model.sections.filter((sec) => sec.id !== id),
       },
+      isResultStale: true,
     }));
   },
 
@@ -761,6 +716,78 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
     }));
   },
 
+  addPrescribedDisplacement: (item) => {
+    const id = generateId();
+    set((s) => ({
+      model: {
+        ...s.model,
+        prescribedDisplacements: [
+          ...(s.model.prescribedDisplacements ?? []),
+          { ...item, id, loadCaseId: item.loadCaseId ?? getActiveLoadCaseId(s.model) },
+        ],
+      },
+      isResultStale: true,
+    }));
+    return id;
+  },
+
+  updatePrescribedDisplacement: (id, updates) => {
+    set((s) => ({
+      model: {
+        ...s.model,
+        prescribedDisplacements: (s.model.prescribedDisplacements ?? []).map((item) =>
+          item.id === id ? { ...item, ...updates } : item
+        ),
+      },
+      isResultStale: true,
+    }));
+  },
+
+  removePrescribedDisplacement: (id) => {
+    set((s) => ({
+      model: {
+        ...s.model,
+        prescribedDisplacements: (s.model.prescribedDisplacements ?? [])
+          .filter((item) => item.id !== id),
+      },
+      isResultStale: true,
+    }));
+  },
+
+  addNodeMass: (item) => {
+    const id = generateId();
+    set((s) => ({
+      model: {
+        ...s.model,
+        nodeMasses: [...(s.model.nodeMasses ?? []), { ...item, id }],
+      },
+      isResultStale: true,
+    }));
+    return id;
+  },
+
+  updateNodeMass: (id, updates) => {
+    set((s) => ({
+      model: {
+        ...s.model,
+        nodeMasses: (s.model.nodeMasses ?? []).map((item) =>
+          item.id === id ? { ...item, ...updates } : item
+        ),
+      },
+      isResultStale: true,
+    }));
+  },
+
+  removeNodeMass: (id) => {
+    set((s) => ({
+      model: {
+        ...s.model,
+        nodeMasses: (s.model.nodeMasses ?? []).filter((item) => item.id !== id),
+      },
+      isResultStale: true,
+    }));
+  },
+
   addLoadCase: (name) => {
     const id = generateId();
     set((s) => ({
@@ -822,6 +849,9 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
           ),
           memberLoads: s.model.memberLoads.map((load) =>
             load.loadCaseId === id ? { ...load, loadCaseId: fallbackId } as MemberLoad : load
+          ),
+          prescribedDisplacements: (s.model.prescribedDisplacements ?? []).map((item) =>
+            item.loadCaseId === id ? { ...item, loadCaseId: fallbackId } : item
           ),
         },
         isResultStale: true,
@@ -934,56 +964,57 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
 
   setAnalyzing: (v) => set({ isAnalyzing: v }),
 
-  setAnalysisResult: (resp) => {
-    if (resp.type === 'analyze-all-success') {
-      set((s) => {
-        const preferredTargetId = s.model.activeLoadCombinationId
-          ?? getActiveLoadCaseId(s.model);
-        const selected = resp.results.find((result) => result.target.id === preferredTargetId)
-          ?? resp.results[0];
-        return {
-          analysisResult: selected ? targetResultToAnalysisResult(selected) : null,
-          analysisResults: resp.results,
-          analysisEnvelope: resp.envelope,
-          analysisFactorizationCount: resp.factorizationCount,
-          analysisResultView: selected
-            ? { kind: 'target' as const, targetId: selected.target.id }
-            : null,
-          analysisError: null,
-          isAnalyzing: false,
-          isResultStale: false,
-        };
-      });
-    } else if (resp.type === 'analyze-success') {
-      set({
-        analysisResult: {
-          displacements: resp.displacements,
-          reactions: resp.reactions,
-          elementEndForces: resp.elementEndForces,
-          diagrams: resp.diagrams,
-          warnings: resp.warnings,
-        },
-        analysisResults: [],
-        analysisEnvelope: null,
-        analysisFactorizationCount: null,
-        analysisResultView: null,
-        analysisError: null,
-        isAnalyzing: false,
-        isResultStale: false,
-      });
-    } else {
+  setAnalysisResult: (outcome) => {
+    if (outcome.type === 'analyze-error') {
       set({
         analysisResult: null,
         analysisResults: [],
         analysisEnvelope: null,
         analysisFactorizationCount: null,
         analysisResultView: null,
-        analysisError: resp.error,
+        analysisError: outcome.error,
         isAnalyzing: false,
         isResultStale: false,
       });
+      return;
     }
+    set((s) => {
+      const preferredTargetId = s.model.activeLoadCombinationId
+        ?? getActiveLoadCaseId(s.model);
+      const selected = outcome.results.find((result) => result.target.id === preferredTargetId)
+        ?? outcome.results[0];
+      return {
+        analysisResult: selected ? targetResultToAnalysisResult(selected) : null,
+        analysisResults: outcome.results,
+        analysisEnvelope: outcome.envelope,
+        analysisFactorizationCount: outcome.factorizationCount,
+        analysisResultView: selected
+          ? { kind: 'target' as const, targetId: selected.target.id }
+          : null,
+        analysisError: null,
+        isAnalyzing: false,
+        isResultStale: false,
+      };
+    });
   },
+
+  setModalResult: (result) => set((s) => ({
+    modalResult: result,
+    eigenErrors: { ...s.eigenErrors, modal: null },
+    isAnalyzing: false,
+  })),
+
+  setBucklingResult: (result) => set((s) => ({
+    bucklingResult: result,
+    eigenErrors: { ...s.eigenErrors, buckling: null },
+    isAnalyzing: false,
+  })),
+
+  setEigenError: (kind, error, sourceModel) => set((s) => ({
+    ...(kind === 'modal' ? { modalResult: null } : { bucklingResult: null }),
+    eigenErrors: { ...s.eigenErrors, [kind]: { error, sourceModel } },
+    isAnalyzing: false,
+  })),
 
   selectAnalysisResultView: (view) => {
     set((s) => {

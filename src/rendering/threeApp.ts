@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { AnalysisResult, ProjectModel } from '../core/model/types';
-import type {
-  DisplayMode,
-  EditTool,
-  LabelMode,
-  Theme,
-  WorkPlaneAxis,
+import {
+  isForceDiagramMode,
+  type DisplayMode,
+  type EditTool,
+  type LabelMode,
+  type Theme,
+  type WorkPlaneAxis,
 } from '../state/viewStore';
 import {
   CAMERA_FAR,
@@ -86,8 +87,13 @@ export class ThreeApp {
 
   private model: ProjectModel | null = null;
   private result: AnalysisResult | null = null;
+  /** Unit-normalized eigenmode shown in `modeShape` display mode. */
+  private modeShape: AnalysisResult | null = null;
   private displayMode: DisplayMode = 'model';
   private deformationScale = 50;
+  private modeShapeScale = 1;
+  /** Bounding-box diagonal of the model nodes; the reference for mode-shape amplitude. */
+  private modelExtent = 1;
   private animateDeformation = false;
   private deformationAnimationFactor = 1;
   private deformationGeometry: DeformationGeometryState | null = null;
@@ -161,7 +167,7 @@ export class ThreeApp {
   private animate = (): void => {
     this.animationId = requestAnimationFrame(this.animate);
     this.controls.update();
-    if (this.animateDeformation && this.displayMode === 'deformation' && this.deformationGeometry) {
+    if (this.animateDeformation && this.deformationGeometry) {
       this.deformationAnimationFactor = Math.sin(performance.now() / 650);
       this.updateDeformation();
     }
@@ -179,6 +185,10 @@ export class ThreeApp {
     this.renderer.setPixelRatio(pixelRatio);
     this.renderer.setSize(width, height);
     this.labelOverlay.resize(width, height, pixelRatio);
+    // Resizing clears both canvases; redraw now instead of leaving a blank
+    // frame until the next animation tick (which is throttled in hidden tabs).
+    this.renderer.render(this.scene, this.camera);
+    this.drawLabels();
   }
 
   setTheme(theme: Theme): void {
@@ -192,6 +202,9 @@ export class ThreeApp {
 
   setModel(model: ProjectModel): void {
     this.model = model;
+    const bounds = new THREE.Box3();
+    for (const node of model.nodes) bounds.expandByPoint(new THREE.Vector3(node.x, node.y, node.z));
+    this.modelExtent = bounds.isEmpty() ? 1 : Math.max(bounds.getSize(new THREE.Vector3()).length(), 1e-9);
     this.pendingMemberStart = null;
     this.rubberBandTarget = null;
     this.hoveredNodeId = null;
@@ -209,6 +222,11 @@ export class ThreeApp {
     this.rebuildResults();
   }
 
+  setModeShape(shape: AnalysisResult | null): void {
+    this.modeShape = shape;
+    if (this.displayMode === 'modeShape') this.rebuildResults();
+  }
+
   setDisplayMode(mode: DisplayMode): void {
     if (this.displayMode === mode) return;
     this.displayMode = mode;
@@ -217,18 +235,23 @@ export class ThreeApp {
 
   setDeformationScale(scale: number): void {
     this.deformationScale = scale;
-    if (this.displayMode === 'deformation') this.updateDeformation();
+    this.updateDeformation();
+  }
+
+  setModeShapeScale(scale: number): void {
+    this.modeShapeScale = scale;
+    this.updateDeformation();
   }
 
   setAnimateDeformation(value: boolean): void {
     this.animateDeformation = value;
     this.deformationAnimationFactor = 1;
-    if (this.displayMode === 'deformation') this.updateDeformation();
+    this.updateDeformation();
   }
 
   setDiagramScale(scale: number): void {
     this.diagramScale = scale;
-    if (this.displayMode !== 'model' && this.displayMode !== 'deformation') this.rebuildResults();
+    if (isForceDiagramMode(this.displayMode)) this.rebuildResults();
   }
 
   setGridSnap(value: boolean): void {
@@ -370,14 +393,16 @@ export class ThreeApp {
   private rebuildResults(): void {
     clearGroup(this.resultGroup);
     this.deformationGeometry = null;
-    if (!this.model || !this.result) return;
-    if (this.displayMode === 'deformation') {
-      this.deformationGeometry = createDeformationGeometry(this.model, this.result);
+    if (!this.model) return;
+    if (this.displayMode === 'deformation' || this.displayMode === 'modeShape') {
+      const source = this.displayMode === 'modeShape' ? this.modeShape : this.result;
+      if (!source) return;
+      this.deformationGeometry = createDeformationGeometry(this.model, source);
       if (this.deformationGeometry) {
         this.resultGroup.add(this.deformationGeometry.lines);
         this.updateDeformation();
       }
-    } else if (this.displayMode !== 'model') {
+    } else if (isForceDiagramMode(this.displayMode) && this.result) {
       populateDiagrams(
         this.resultGroup,
         this.model,
@@ -391,7 +416,12 @@ export class ThreeApp {
   private updateDeformation(): void {
     if (!this.deformationGeometry) return;
     const animationFactor = this.animateDeformation ? this.deformationAnimationFactor : 1;
-    updateDeformationGeometry(this.deformationGeometry, this.deformationScale * animationFactor);
+    // Mode shapes have a unit peak, so their scale is relative to the model
+    // size: a factor of 1 draws the peak at 10 % of the extent.
+    const scale = this.displayMode === 'modeShape'
+      ? this.modeShapeScale * 0.1 * this.modelExtent
+      : this.deformationScale;
+    updateDeformationGeometry(this.deformationGeometry, scale * animationFactor);
   }
 
   private drawLabels(): void {

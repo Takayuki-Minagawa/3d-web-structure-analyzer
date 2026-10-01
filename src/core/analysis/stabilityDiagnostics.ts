@@ -4,8 +4,8 @@ import type {
   ReleasedMemberMode,
   StabilityDiagnostic,
 } from '../model/types';
+import { DOF_NAMES } from '../model/restraints';
 
-const DOF_NAMES: DofName[] = ['ux', 'uy', 'uz', 'rx', 'ry', 'rz'];
 const MAX_ZERO_STIFFNESS_DIAGNOSTICS = 6;
 const MAX_RELEASE_DIAGNOSTICS = 4;
 
