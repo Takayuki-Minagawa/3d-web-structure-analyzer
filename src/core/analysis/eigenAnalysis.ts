@@ -34,9 +34,14 @@ export const DEFAULT_MODE_COUNT = 6;
 export const MAX_MODE_COUNT = 30;
 /** Dense eigen solves are O(n³); beyond this the worker would stall. */
 export const MAX_EIGEN_FREE_DOFS = 1500;
-/** 'auto' subdivision keeps the problem below this size for a quick solve. */
-const AUTO_DIVISION_DOF_BUDGET = 600;
+/** Full matrices (free and restrained DOFs) are dense too; this bounds their memory. */
+export const MAX_EIGEN_TOTAL_DOFS = 3600;
+/** 'auto' subdivision keeps the solve to a couple of seconds. */
+const AUTO_DIVISION_DOF_BUDGET = 1000;
 const AUTO_DIVISION_CANDIDATES = [4, 2, 1] as const;
+const MAX_DIVISIONS = 16;
+/** A translation peak this small relative to the rotations is round-off noise. */
+const TRANSLATION_NOISE_RATIO = 1e-8;
 /** Eigenvalues below this fraction of the spectral radius are numerical noise. */
 const RELATIVE_EIGENVALUE_TOLERANCE = 1e-10;
 /** Deflection samples per member in a mode shape. */
@@ -56,33 +61,58 @@ function resolveModeCount(options: EigenAnalysisOptions): number {
   return Math.max(1, Math.min(MAX_MODE_COUNT, Number.isFinite(requested) ? requested : DEFAULT_MODE_COUNT));
 }
 
-function resolveDivisions(model: ProjectModel, options: EigenAnalysisOptions): number {
-  const requested = options.divisions ?? 'auto';
-  if (requested !== 'auto') return Math.max(1, Math.min(16, Math.floor(requested)));
-  const estimate = (divisions: number) =>
-    6 * (model.nodes.length + model.members.length * (divisions - 1));
-  return AUTO_DIVISION_CANDIDATES.find((divisions) => estimate(divisions) <= AUTO_DIVISION_DOF_BUDGET) ?? 1;
-}
-
 function assertValidModel(model: ProjectModel): void {
   const validationError = validateModel(model)[0];
   if (validationError) throw toAnalysisException(validationError);
 }
 
-/** Validate, subdivide and assemble the stiffness side of an eigenproblem. */
-function prepareEigenSystem(model: ProjectModel, options: EigenAnalysisOptions): EigenSystem {
-  const divisions = resolveDivisions(model, options);
+interface SubdividedSystem {
+  refined: SubdividedModel;
+  indexed: IndexedModel;
+  freeDofs: number[];
+  divisions: number;
+}
+
+function subdivideAndIndex(model: ProjectModel, divisions: number): SubdividedSystem {
   const refined = subdivideMembers(model, divisions);
   const indexed = buildIndexedModel(refined.model);
-  const K = assembleGlobalStiffness(indexed);
-  const { freeDofs } = partitionDofs(indexed);
+  return { refined, indexed, freeDofs: partitionDofs(indexed).freeDofs, divisions };
+}
+
+/**
+ * Subdivide as requested. 'auto' takes the finest candidate whose actual
+ * free-DOF count fits the time budget, so restraints and 2D modes count.
+ */
+function subdivideForEigen(model: ProjectModel, options: EigenAnalysisOptions): SubdividedSystem {
+  const requested = options.divisions ?? 'auto';
+  if (requested !== 'auto') {
+    const divisions = Number.isFinite(requested)
+      ? Math.max(1, Math.min(MAX_DIVISIONS, Math.floor(requested)))
+      : 1;
+    return subdivideAndIndex(model, divisions);
+  }
+  let system: SubdividedSystem | null = null;
+  for (const divisions of AUTO_DIVISION_CANDIDATES) {
+    system = subdivideAndIndex(model, divisions);
+    if (system.freeDofs.length <= AUTO_DIVISION_DOF_BUDGET) break;
+  }
+  return system!;
+}
+
+/** Validate sizes and assemble the stiffness side of an eigenproblem. */
+function prepareEigenSystem(model: ProjectModel, options: EigenAnalysisOptions): EigenSystem {
+  const { refined, indexed, freeDofs, divisions } = subdivideForEigen(model, options);
   if (freeDofs.length === 0) {
     throw createAnalysisException('validation', '自由な自由度がないため固有値解析を実行できません。');
   }
-  if (freeDofs.length > MAX_EIGEN_FREE_DOFS) {
+  // Checked before any dense matrix is allocated.
+  if (freeDofs.length > MAX_EIGEN_FREE_DOFS || indexed.dofCount > MAX_EIGEN_TOTAL_DOFS) {
+    const advice = divisions > 1
+      ? '部材分割数を減らしてください。'
+      : 'この規模のモデルの固有値・座屈解析には対応していません。';
     throw createAnalysisException(
       'validation',
-      `固有値解析の自由度数 ${freeDofs.length} が上限 ${MAX_EIGEN_FREE_DOFS} を超えています。部材分割数を減らしてください。`
+      `固有値解析の自由度数（自由 ${freeDofs.length} / 全体 ${indexed.dofCount}）が上限（自由 ${MAX_EIGEN_FREE_DOFS} / 全体 ${MAX_EIGEN_TOTAL_DOFS}）を超えています。${advice}`
     );
   }
   const warnings: string[] = [];
@@ -92,6 +122,12 @@ function prepareEigenSystem(model: ProjectModel, options: EigenAnalysisOptions):
       `ねじり定数 Ix が 0 の部材 ${undivided} 本は分割せずに解析しました（部材内の局所モードは表現されません）。`
     );
   }
+  if (divisions === 1 && (options.divisions ?? 'auto') === 'auto') {
+    warnings.push(
+      'モデル規模が大きいため部材を分割せずに解析しました。部材内の局所的な振動・座屈モードは表現されず、座屈荷重係数を過大評価することがあります。'
+    );
+  }
+  const K = assembleGlobalStiffness(indexed);
   return { refined, indexed, K, freeDofs, divisions, warnings };
 }
 
@@ -141,16 +177,22 @@ function buildModeShape(
     if (indexed.dofMap[dof] !== dof) full[dof] = full[indexed.dofMap[dof]!]!;
   }
 
-  // Normalize so the largest translation is +1 (rotations follow the same scale).
-  let peak = 0;
+  // Normalize so the largest translation is +1 (rotations follow the same
+  // scale). A mode without real translation, such as pure torsion, only has
+  // round-off noise there and is normalized to a unit peak rotation instead.
+  let translationPeak = 0;
+  let rotationPeak = 0;
   for (let dof = 0; dof < indexed.dofCount; dof++) {
-    if (dof % 6 < 3 && Math.abs(full[dof]!) > Math.abs(peak)) peak = full[dof]!;
+    const value = full[dof]!;
+    if (dof % 6 < 3) {
+      if (Math.abs(value) > Math.abs(translationPeak)) translationPeak = value;
+    } else if (Math.abs(value) > Math.abs(rotationPeak)) rotationPeak = value;
   }
-  if (peak === 0) {
-    for (let dof = 0; dof < indexed.dofCount; dof++) {
-      if (Math.abs(full[dof]!) > Math.abs(peak)) peak = full[dof]!;
-    }
-  }
+  let longestMember = 0;
+  for (const member of indexed.members) longestMember = Math.max(longestMember, member.L);
+  const translationIsNoise =
+    Math.abs(translationPeak) <= TRANSLATION_NOISE_RATIO * Math.abs(rotationPeak) * longestMember;
+  const peak = translationIsNoise ? rotationPeak : translationPeak;
   const scale = peak === 0 ? 1 : peak;
   for (let dof = 0; dof < indexed.dofCount; dof++) full[dof] = full[dof]! / scale;
 
@@ -298,6 +340,13 @@ export function analyzeModal(
     });
   }
 
+  if (modes.length === 0) {
+    throw createAnalysisException(
+      'validation',
+      '固有モードが見つかりません。質量が拘束されていない自由度に作用しているか確認してください。'
+    );
+  }
+
   return {
     modes,
     totalMass,
@@ -324,8 +373,11 @@ function axialForceAt(points: readonly DiagramPoint[], x: number): number {
 
 function resolveBucklingTarget(model: ProjectModel, targetId: string | undefined): AnalysisTarget {
   const targets = getAnalysisTargets(model);
-  const preferredId = targetId ?? model.activeLoadCombinationId ?? getActiveLoadCaseId(model);
-  const target = targets.find((item) => item.id === preferredId) ?? targets[0];
+  // Same precedence as the static path: an explicit target, then the active
+  // combination, then the active load case.
+  const target = [targetId, model.activeLoadCombinationId, getActiveLoadCaseId(model)]
+    .map((id) => targets.find((item) => item.id === id))
+    .find((item) => item !== undefined);
   if (!target) throw createAnalysisException('validation', '座屈解析の対象となる荷重ケースがありません。');
   return target;
 }

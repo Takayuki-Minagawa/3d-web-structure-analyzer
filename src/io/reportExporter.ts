@@ -276,7 +276,7 @@ function buildReportDocument(input: ReportInput): ReportDocument {
     ],
     inputTables: buildInputTables(model),
     resultTables: resolved ? buildResultTables(model, resolved) : null,
-    eigenTables: error ? [] : buildEigenTables(input),
+    eigenTables: buildEigenTables(input),
     warnings: resolved?.result.warnings ?? [],
     errorMessage: error?.message ?? null,
   };
@@ -300,6 +300,9 @@ export function generateMarkdownReport(input: ReportInput): string {
 
   if (doc.errorMessage !== null) {
     lines.push('## Analysis Error', '', doc.errorMessage, '');
+    for (const table of doc.eigenTables) {
+      lines.push(`## ${table.title}`, '', markdownTable(table.headers, table.rows), '');
+    }
     return lines.join('\n');
   }
 
@@ -332,7 +335,8 @@ export function generateCsvReport(input: ReportInput): string {
   };
 
   if (doc.errorMessage !== null) {
-    rows.push(['Analysis Error'], [doc.errorMessage]);
+    rows.push(['Analysis Error'], [doc.errorMessage], []);
+    doc.eigenTables.forEach(pushTable);
     return rows.map(csvRow).join('\n');
   }
 

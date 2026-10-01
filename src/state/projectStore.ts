@@ -19,8 +19,10 @@ import type {
   PrescribedDisplacement,
 } from '../core/model/types';
 import {
+  NO_EIGEN_ERRORS,
   targetResultToAnalysisResult,
   type EigenAnalysisKind,
+  type StoredEigenErrors,
   type StaticAnalysisOutcome,
   type StoredBucklingResult,
   type StoredEnvelope,
@@ -250,7 +252,7 @@ function replacementState(
     analysisError: null,
     modalResult: null,
     bucklingResult: null,
-    eigenError: null,
+    eigenErrors: NO_EIGEN_ERRORS,
     isAnalyzing: false,
     isResultStale: false,
     fitViewVersion: fitViewVersion + 1,
@@ -266,10 +268,10 @@ interface ProjectState {
   analysisFactorizationCount: number | null;
   analysisResultView: AnalysisResultView | null;
   analysisError: AnalysisError | null;
-  /** Eigen results stay bound to the model object they were computed from. */
+  /** Eigen results and errors stay bound to the model object they belong to. */
   modalResult: StoredModalResult | null;
   bucklingResult: StoredBucklingResult | null;
-  eigenError: { kind: EigenAnalysisKind; error: AnalysisError } | null;
+  eigenErrors: StoredEigenErrors;
   isAnalyzing: boolean;
   isResultStale: boolean;
   /** Incremented when a full model load occurs and the view should fit to new content. */
@@ -338,7 +340,7 @@ interface ProjectState {
   setAnalysisResult: (outcome: StaticAnalysisOutcome) => void;
   setModalResult: (result: StoredModalResult) => void;
   setBucklingResult: (result: StoredBucklingResult) => void;
-  setEigenError: (kind: EigenAnalysisKind, error: AnalysisError) => void;
+  setEigenError: (kind: EigenAnalysisKind, error: AnalysisError, sourceModel: ProjectModel) => void;
   selectAnalysisResultView: (view: AnalysisResultView) => void;
   markResultStale: () => void;
   setAnalysisMode: (mode: AnalysisMode) => AnalysisModeUpdateResult;
@@ -386,7 +388,7 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
   analysisError: null,
   modalResult: null,
   bucklingResult: null,
-  eigenError: null,
+  eigenErrors: NO_EIGEN_ERRORS,
   isAnalyzing: false,
   isResultStale: false,
   fitViewVersion: 0,
@@ -998,21 +1000,21 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
 
   setModalResult: (result) => set((s) => ({
     modalResult: result,
-    eigenError: s.eigenError?.kind === 'modal' ? null : s.eigenError,
+    eigenErrors: { ...s.eigenErrors, modal: null },
     isAnalyzing: false,
   })),
 
   setBucklingResult: (result) => set((s) => ({
     bucklingResult: result,
-    eigenError: s.eigenError?.kind === 'buckling' ? null : s.eigenError,
+    eigenErrors: { ...s.eigenErrors, buckling: null },
     isAnalyzing: false,
   })),
 
-  setEigenError: (kind, error) => set({
+  setEigenError: (kind, error, sourceModel) => set((s) => ({
     ...(kind === 'modal' ? { modalResult: null } : { bucklingResult: null }),
-    eigenError: { kind, error },
+    eigenErrors: { ...s.eigenErrors, [kind]: { error, sourceModel } },
     isAnalyzing: false,
-  }),
+  })),
 
   selectAnalysisResultView: (view) => {
     set((s) => {

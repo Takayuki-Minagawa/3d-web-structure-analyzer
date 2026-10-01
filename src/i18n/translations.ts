@@ -431,6 +431,9 @@ const ja = {
   'help.analysis.buckling': '「座屈解析」: 解析対象の荷重に対する弾性曲げ座屈の荷重係数 λ とモード形を計算',
   'help.analysis.subdivision': '固有値・座屈解析では「解析設定」の部材分割数で精度を調整（1分割では部材内の局所モードを表現できません）',
   'help.signs.moment': '曲げモーメント図: 引張側に描画。変形図は部材内のたわみ曲線を表示',
+  'prop.prescribedDisplacementUnrestrained': '拘束されていない自由度に強制変位が残っています。値を 0 にするか、支持条件で固定してください。',
+  'prop.loadRangeInvalid': 'a < b となるように範囲を指定してください。',
+  'prop.loadRangeFull': '全長に設定',
 } as const;
 
 const en: Record<keyof typeof ja, string> = {
@@ -845,6 +848,9 @@ const en: Record<keyof typeof ja, string> = {
   'help.analysis.buckling': '"Buckling": elastic flexural buckling load factors λ and mode shapes for the active analysis target',
   'help.analysis.subdivision': 'Tune modal / buckling accuracy with the elements-per-member setting under Analysis Settings (one element cannot represent member-local modes)',
   'help.signs.moment': 'Bending moment diagrams are drawn on the tension side. Deformed shapes show the deflection curve inside each member',
+  'prop.prescribedDisplacementUnrestrained': 'A prescribed displacement remains on an unrestrained DOF. Set it to 0 or restrain the DOF.',
+  'prop.loadRangeInvalid': 'The range must satisfy a < b.',
+  'prop.loadRangeFull': 'Span full length',
 };
 
 export type TKey = keyof typeof ja;

@@ -89,30 +89,42 @@ describe('eigen results in the project store', () => {
     state = useProjectStore.getState();
     expect(state.modalResult).toBeNull();
     expect(state.bucklingResult).toBeNull();
-    expect(state.eigenError).toBeNull();
+    expect(state.eigenErrors).toEqual({ modal: null, buckling: null });
   });
 
-  it('stores eigen errors per analysis kind without touching static results', () => {
+  it('stores eigen errors per analysis kind, bound to the model they belong to', () => {
     useProjectStore.getState().loadModel(column());
     const model = useProjectStore.getState().model;
     const { modal, buckling } = storedResults(model);
     const store = useProjectStore.getState();
+    const bucklingError = { type: 'validation' as const, message: 'no compression' };
+    const modalError = { type: 'validation' as const, message: 'no mass' };
     store.setModalResult(modal);
     store.setBucklingResult(buckling);
-    store.setEigenError('buckling', { type: 'validation', message: 'no compression' });
+    store.setEigenError('buckling', bucklingError, model);
 
     let state = useProjectStore.getState();
-    expect(state.eigenError).toEqual({ kind: 'buckling', error: { type: 'validation', message: 'no compression' } });
+    expect(state.eigenErrors.buckling).toEqual({ error: bucklingError, sourceModel: model });
+    expect(state.eigenErrors.modal).toBeNull();
     expect(state.bucklingResult).toBeNull();
     expect(state.modalResult).not.toBeNull();
     expect(state.analysisError).toBeNull();
+    expect(state.isAnalyzing).toBe(false);
 
-    // A successful rerun of the same kind clears its error; other kinds do not.
-    state.setModalResult(modal);
-    expect(useProjectStore.getState().eigenError?.kind).toBe('buckling');
+    // Errors of the two kinds coexist; a successful rerun clears only its own.
+    state.setEigenError('modal', modalError, model);
+    state = useProjectStore.getState();
+    expect(state.eigenErrors.modal?.error).toEqual(modalError);
+    expect(state.eigenErrors.buckling?.error).toEqual(bucklingError);
     state.setBucklingResult(buckling);
     state = useProjectStore.getState();
-    expect(state.eigenError).toBeNull();
+    expect(state.eigenErrors.buckling).toBeNull();
+    expect(state.eigenErrors.modal?.error).toEqual(modalError);
+
+    // After an edit the error no longer belongs to the current model.
+    state.updateNode('top', { z: 3.5 });
+    state = useProjectStore.getState();
+    expect(state.eigenErrors.modal?.sourceModel).not.toBe(state.model);
   });
 
   it('switches the viewport and results tab when a mode shape is selected', () => {
@@ -124,6 +136,16 @@ describe('eigen results in the project store', () => {
     expect(isForceDiagramMode('modeShape')).toBe(false);
     expect(isForceDiagramMode('deformation')).toBe(false);
     expect(isForceDiagramMode('My')).toBe(true);
+
+    // A static run leaves the eigen tabs so its result or error is visible,
+    // but keeps whichever static tab the user was on.
+    view.focusResultsForRun('static');
+    expect(useViewStore.getState().resultsTab).toBe('displacements');
+    view.setResultsTab('reactions');
+    view.focusResultsForRun('static');
+    expect(useViewStore.getState().resultsTab).toBe('reactions');
+    view.focusResultsForRun('modal');
+    expect(useViewStore.getState().resultsTab).toBe('modal');
 
     view.setEigenModeCount(99);
     expect(useViewStore.getState().eigenModeCount).toBe(30);
@@ -162,6 +184,28 @@ describe('eigen results in reports', () => {
     const html = generatePrintableReportHtml(input);
     expect(html).toContain('Modal Analysis');
     expect(html).toContain('<th>Load factor</th>');
+  });
+
+  it('keeps current eigen tables next to a static analysis error', () => {
+    const model = column();
+    const { modal, buckling } = storedResults(model);
+    const input = {
+      model,
+      result: null,
+      modal,
+      buckling,
+      error: { type: 'singular' as const, message: 'Static failure' },
+      generatedAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    for (const report of [
+      generateMarkdownReport(input),
+      generateCsvReport(input),
+      generatePrintableReportHtml(input),
+    ]) {
+      expect(report).toContain('Static failure');
+      expect(report).toContain('Modal Analysis');
+      expect(report).toContain('Load factor');
+    }
   });
 
   it('describes trapezoidal loads and prescribed displacements in the input tables', () => {

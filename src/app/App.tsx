@@ -107,15 +107,22 @@ export const App: React.FC = () => {
     downloadText('frame-model-3d.json', JSON.stringify(file, null, 2), 'application/json');
   }, [model]);
 
-  /** Snapshot of the model and its current results; null (with a notice) when stale. */
+  /**
+   * Snapshot of the model and the results that are current for it. Stale
+   * static results are left out; when nothing current remains to report
+   * alongside them, the user is told to re-run instead.
+   */
   const createReportInput = useCallback((): ReportInput | null => {
     const state = useProjectStore.getState();
-    if (state.isResultStale) {
+    const modal = state.modalResult?.sourceModel === state.model ? state.modalResult : null;
+    const buckling = state.bucklingResult?.sourceModel === state.model ? state.bucklingResult : null;
+    const staticIsStale = state.isResultStale;
+    if (staticIsStale && !modal && !buckling) {
       alert(t('prop.staleWarning'));
       return null;
     }
     let resultView: ReportResultView | undefined;
-    const view = state.analysisResultView;
+    const view = staticIsStale ? null : state.analysisResultView;
     if (view?.kind === 'target') {
       const selected = state.analysisResults.find((item) => item.target.id === view.targetId);
       if (selected) resultView = { kind: 'target', target: selected.target };
@@ -131,13 +138,12 @@ export const App: React.FC = () => {
     }
     return {
       model: state.model,
-      result: state.analysisResult,
+      result: staticIsStale ? null : state.analysisResult,
       ...(resultView ? { resultView } : {}),
-      ...(state.modalResult?.sourceModel === state.model ? { modal: state.modalResult } : {}),
-      ...(state.bucklingResult?.sourceModel === state.model ? { buckling: state.bucklingResult } : {}),
-      error: state.analysisError,
+      ...(modal ? { modal } : {}),
+      ...(buckling ? { buckling } : {}),
+      error: staticIsStale ? null : state.analysisError,
       generatedAt: new Date(),
-      isResultStale: state.isResultStale,
     };
   }, [t]);
 

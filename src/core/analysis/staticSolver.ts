@@ -61,19 +61,26 @@ export function prepareStaticSystem(model: IndexedModel): StaticSystem {
   }
 }
 
+/** Relative tolerance for two coupled supports prescribing the same movement. */
+const PRESCRIBED_AGREEMENT_TOLERANCE = 1e-9;
+
 /**
  * Collect prescribed displacements into a full-length vector addressed by
  * effective (coupling-resolved) DOF. Returns null when nothing is prescribed.
+ *
+ * Entries on the same nodal DOF superpose (load combinations expand into one
+ * scaled entry per case). DOFs of different nodes that are coupled together
+ * share one displacement, so their prescriptions must agree instead of adding.
  */
 export function buildPrescribedDisplacementVector(
   model: IndexedModel,
   fixedDofs: readonly number[]
 ): Float64Array | null {
   if (model.prescribedDisplacements.length === 0) return null;
-  const prescribed = new Float64Array(model.dofCount);
   const isFixed = new Uint8Array(model.dofCount);
   for (const dof of fixedDofs) isFixed[dof] = 1;
 
+  const bySourceDof = new Map<number, { value: number; nodeId: string; id: string }>();
   for (const item of model.prescribedDisplacements) {
     const nodeIndex = model.nodeIdToIndex.get(item.nodeId);
     if (nodeIndex === undefined) continue;
@@ -81,16 +88,39 @@ export function buildPrescribedDisplacementVector(
     for (let localDof = 0; localDof < 6; localDof++) {
       const value = values[localDof]!;
       if (value === 0) continue;
-      const dof = model.dofMap[nodeIndex * 6 + localDof]!;
-      if (!isFixed[dof]) {
+      const sourceDof = nodeIndex * 6 + localDof;
+      if (!isFixed[model.dofMap[sourceDof]!]) {
         throw createAnalysisException(
           'validation',
           `強制変位 ${item.id} は拘束されていない自由度に指定されています。`,
           { nodeId: item.nodeId }
         );
       }
-      prescribed[dof] = prescribed[dof]! + value;
+      const entry = bySourceDof.get(sourceDof);
+      if (entry) entry.value += value;
+      else bySourceDof.set(sourceDof, { value, nodeId: item.nodeId, id: item.id });
     }
+  }
+
+  const prescribed = new Float64Array(model.dofCount);
+  const assigned = new Map<number, { value: number; id: string }>();
+  for (const [sourceDof, entry] of bySourceDof) {
+    if (entry.value === 0) continue; // contributions cancelled out
+    const dof = model.dofMap[sourceDof]!;
+    const previous = assigned.get(dof);
+    if (previous) {
+      const scale = Math.max(Math.abs(previous.value), Math.abs(entry.value));
+      if (Math.abs(previous.value - entry.value) > scale * PRESCRIBED_AGREEMENT_TOLERANCE) {
+        throw createAnalysisException(
+          'validation',
+          `強制変位 ${previous.id} と ${entry.id} は同一変位カップリングで連成された自由度に異なる値を指定しています。`,
+          { nodeId: entry.nodeId }
+        );
+      }
+      continue;
+    }
+    assigned.set(dof, { value: entry.value, id: entry.id });
+    prescribed[dof] = entry.value;
   }
   return prescribed;
 }

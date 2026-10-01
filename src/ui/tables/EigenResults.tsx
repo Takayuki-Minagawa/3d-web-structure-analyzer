@@ -22,13 +22,13 @@ export const EigenResults: React.FC<{ kind: EigenAnalysisKind }> = ({ kind }) =>
   const model = useProjectStore((s) => s.model);
   const modalResult = useProjectStore((s) => s.modalResult);
   const bucklingResult = useProjectStore((s) => s.bucklingResult);
-  const eigenError = useProjectStore((s) => s.eigenError);
+  const eigenError = useProjectStore((s) => s.eigenErrors[kind]);
   const shapeView = useViewStore((s) => s.shapeView);
   const displayMode = useViewStore((s) => s.displayMode);
   const showModeShape = useViewStore((s) => s.showModeShape);
 
   const result = kind === 'modal' ? modalResult : bucklingResult;
-  if (eigenError?.kind === kind) return <AnalysisErrorDetails error={eigenError.error} model={model} />;
+  if (eigenError?.sourceModel === model) return <AnalysisErrorDetails error={eigenError.error} model={model} />;
   if (!result) {
     return <p className="muted">{t(kind === 'modal' ? 'results.modalHint' : 'results.bucklingHint')}</p>;
   }
@@ -41,6 +41,13 @@ export const EigenResults: React.FC<{ kind: EigenAnalysisKind }> = ({ kind }) =>
   const rowProps = (index: number) => ({
     className: isShown(index) ? 'eigen-row active' : 'eigen-row',
     onClick: () => showModeShape({ kind, index }),
+    onKeyDown: (event: React.KeyboardEvent) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      showModeShape({ kind, index });
+    },
+    tabIndex: 0,
+    'aria-selected': isShown(index),
     title: t('results.showModeShape'),
   });
   const summary = t('results.eigenSummary')

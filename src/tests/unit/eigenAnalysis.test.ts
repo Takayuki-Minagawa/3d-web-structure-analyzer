@@ -161,11 +161,89 @@ describe('modal analysis', () => {
     expect(error.diagnostics?.length).toBeGreaterThan(0);
   });
 
+  it('normalizes a pure torsion mode by its rotation instead of translation noise', () => {
+    const result = analyzeModal(
+      bar({ iRestraint: FIXED, jRestraint: FREE, analysisMode: '3d' }),
+      { modeCount: 14, divisions: 4 }
+    );
+    const torsion = result.modes.find((mode) => {
+      const d = mode.shape.displacements;
+      return Math.abs(d[6 + 3]!) > 0.5; // tip twist about the member axis
+    });
+    expect(torsion).toBeDefined();
+    const displacements = Array.from(torsion!.shape.displacements);
+    expect(Math.max(...displacements.map(Math.abs))).toBeCloseTo(1, 10);
+    expect(Math.abs(displacements[6 + 3]!)).toBeCloseTo(1, 10);
+    for (const point of torsion!.shape.diagrams.get('bar')!.points) {
+      expect(Math.abs(point.uy)).toBeLessThan(1e-6);
+      expect(Math.abs(point.uz)).toBeLessThan(1e-6);
+    }
+    // Torsional bar frequency (π/2L)·√(G·Ix / ρ(Iy+Iz)), within the 4-element error.
+    const expected = (Math.PI / (2 * L)) * Math.sqrt(7.7e7 * 1e-5 / (DENSITY * (Iy + Iz)));
+    expectRelative(torsion!.omega, expected, 2e-2);
+  });
+
+  it('rejects a model whose mass sits only on restrained DOFs', () => {
+    const model = bar({ iRestraint: FIXED, jRestraint: FREE, density: 0 });
+    model.nodeMasses = [{ id: 'm', nodeId: 'i', mass: 5 }];
+    expect(captureError(() => analyzeModal(model)).message).toContain('固有モードが見つかりません');
+  });
+
+  it('treats a non-finite division request as a single element', () => {
+    const result = analyzeModal(bar({ iRestraint: FIXED, jRestraint: FREE }), {
+      modeCount: 1, divisions: Number.NaN,
+    });
+    expect(result.divisions).toBe(1);
+    expect(result.modes[0]!.shape.diagrams.get('bar')!.points.length).toBeGreaterThan(2);
+  });
+
   it('selects a subdivision automatically and reports the solved size', () => {
     const result = analyzeModal(bar({ iRestraint: FIXED, jRestraint: FREE }));
     expect(result.divisions).toBe(4);
     expect(result.freeDofCount).toBe(12); // 4 moving nodes x (ux, uz, ry)
     expect(result.modes).toHaveLength(6);
+  });
+});
+
+/** Cantilever along X made of `count` unit-length members (xz2d: 3 free DOFs per node). */
+function chain(count: number): ProjectModel {
+  const model = bar({ iRestraint: FIXED, jRestraint: FREE });
+  model.nodes = Array.from({ length: count + 1 }, (_, index) => ({
+    id: `n${index}`, x: index, y: 0, z: 0, restraint: index === 0 ? FIXED : FREE,
+  }));
+  model.members = Array.from({ length: count }, (_, index) => ({
+    id: `m${index}`, ni: `n${index}`, nj: `n${index + 1}`, sectionId: 'sec', codeAngle: 0,
+    iSprings: { x: 0, y: 0, z: 0 },
+    jSprings: { x: 0, y: 0, z: 0 },
+  }));
+  return model;
+}
+
+describe('automatic subdivision', () => {
+  it('uses the finest candidate whose actual free-DOF count fits the budget', () => {
+    // 100 members: 4 divisions need 1200 free DOFs, 2 divisions need 600.
+    const result = analyzeModal(chain(100), { modeCount: 1 });
+    expect(result.divisions).toBe(2);
+    expect(result.freeDofCount).toBe(600);
+    expect(result.warnings).toEqual([]);
+    const scale = Math.sqrt(E * Iy / (DENSITY * A * 100 ** 4));
+    expectRelative(result.modes[0]!.omega, 3.5160 * scale, 1e-3);
+  });
+
+  it('warns when even two elements per member do not fit', () => {
+    // 340 members: 2 divisions need 2040 free DOFs, so one element is used.
+    const result = analyzeModal(chain(340), { modeCount: 1 });
+    expect(result.divisions).toBe(1);
+    expect(result.freeDofCount).toBe(1020);
+    expect(result.warnings.some((warning) => warning.includes('部材を分割せずに'))).toBe(true);
+  }, 30000);
+
+  it('rejects explicit subdivisions beyond the solver size limit before solving', () => {
+    const error = captureError(() => analyzeModal(chain(100), { modeCount: 1, divisions: 8 }));
+    expect(error.type).toBe('validation');
+    expect(error.message).toContain('部材分割数を減らしてください');
+    const tooLarge = captureError(() => analyzeModal(chain(600), { modeCount: 1, divisions: 1 }));
+    expect(tooLarge.message).toContain('対応していません');
   });
 });
 
@@ -255,6 +333,12 @@ describe('linear buckling analysis', () => {
     const combo = analyzeBuckling(model, { modeCount: 1, divisions: 8, targetId: 'combo' });
     expect(active.target.id).toBe('a');
     expect(combo.target.type).toBe('loadCombination');
+    // An unknown target falls back to the active load case, like the static path.
+    const fallback = analyzeBuckling(
+      { ...model, activeLoadCaseId: 'b' },
+      { modeCount: 1, divisions: 8, targetId: 'missing' }
+    );
+    expect(fallback.target.id).toBe('b');
     expectRelative(combo.modes[0]!.loadFactor, active.modes[0]!.loadFactor / 5, 1e-9);
   });
 

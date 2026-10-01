@@ -32,6 +32,13 @@ export type StoredBucklingResult = SerializedBucklingResults<number[]> & ModelBo
 
 export type EigenAnalysisKind = 'modal' | 'buckling';
 
+/** Failure of an eigen analysis, bound to the model it was attempted on. */
+export interface StoredEigenError extends ModelBound {
+  error: AnalysisError;
+}
+export type StoredEigenErrors = Record<EigenAnalysisKind, StoredEigenError | null>;
+export const NO_EIGEN_ERRORS: StoredEigenErrors = { modal: null, buckling: null };
+
 function plainRecord(values: Record<string, Float64Array>): Record<string, number[]> {
   return Object.fromEntries(
     Object.entries(values).map(([key, value]) => [key, Array.from(value)]),

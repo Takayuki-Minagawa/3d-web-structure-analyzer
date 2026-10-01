@@ -58,6 +58,8 @@ interface ViewState {
   setWorkPlaneAxis: (axis: WorkPlaneAxis) => void;
   setWorkPlaneOffset: (offset: number) => void;
   setResultsTab: (tab: ResultsTab) => void;
+  /** Bring the tab that will receive a run's result or error to the front. */
+  focusResultsForRun: (kind: 'static' | 'modal' | 'buckling') => void;
   /** Select an eigenmode and switch the viewport to its shape. */
   showModeShape: (view: ShapeView) => void;
   setEigenModeCount: (count: number) => void;
@@ -115,6 +117,12 @@ export const useViewStore = create<ViewState>((set) => ({
   setWorkPlaneAxis: (axis) => set({ workPlaneAxis: axis }),
   setWorkPlaneOffset: (offset) => set({ workPlaneOffset: Number.isFinite(offset) ? offset : 0 }),
   setResultsTab: (tab) => set({ resultsTab: tab }),
+  focusResultsForRun: (kind) => set((s) => {
+    if (kind !== 'static') return { resultsTab: kind };
+    return s.resultsTab === 'modal' || s.resultsTab === 'buckling'
+      ? { resultsTab: 'displacements' }
+      : {};
+  }),
   showModeShape: (view) => set({ shapeView: view, displayMode: 'modeShape', resultsTab: view.kind }),
   setEigenModeCount: (count) => set({
     eigenModeCount: Math.max(1, Math.min(30, Math.floor(Number.isFinite(count) ? count : 6))),

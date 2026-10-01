@@ -141,6 +141,41 @@ describe('prescribed support displacements', () => {
     expect(Math.max(...Array.from(second, Math.abs))).toBeLessThan(1e-9);
   });
 
+  it('does not add the same settlement entered on two coupled supports', () => {
+    const coupled = (kValue: number) => {
+      const model = beam(FIXED, [
+        settlement({ id: 'pd-j', uy: -0.01 }),
+        settlement({ id: 'pd-k', nodeId: 'k', uy: kValue }),
+      ]);
+      model.nodes.push({ id: 'k', x: 2 * L, y: 0, z: 0, restraint: FIXED });
+      model.members.push({
+        id: 'beam2', ni: 'j', nj: 'k', sectionId: 'sec', codeAngle: 0,
+        iSprings: { x: 0, y: 0, z: 0 }, jSprings: { x: 0, y: 0, z: 0 },
+      });
+      model.couplings = [{
+        id: 'c', masterNodeId: 'j', slaveNodeId: 'k',
+        ux: false, uy: true, uz: false, rx: false, ry: false, rz: false,
+      }];
+      return model;
+    };
+
+    const result = analyze(coupled(-0.01));
+    expect(result.displacements[7]).toBe(-0.01);
+    expect(result.displacements[13]).toBe(-0.01);
+
+    // Coupled supports cannot move by different amounts.
+    const conflicting = coupled(-0.03);
+    expect(() => analyzeFrame({ model: buildIndexedModel(conflicting) })).toThrow(/異なる値/);
+  });
+
+  it('adds entries on the same nodal DOF', () => {
+    const result = analyze(beam(FIXED, [
+      settlement({ id: 'a', uy: -0.01 }),
+      settlement({ id: 'b', uy: -0.005 }),
+    ]));
+    expect(result.displacements[7]).toBeCloseTo(-0.015, 14);
+  });
+
   it('rejects components on unrestrained DOFs and out-of-plane components in 2D', () => {
     const roller: Restraint = { ...FREE, uy: true };
     const onFreeDof = beam(roller, [settlement({ ux: 0.01 })]);

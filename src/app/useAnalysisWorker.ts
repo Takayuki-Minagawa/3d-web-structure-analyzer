@@ -74,7 +74,7 @@ export function useAnalysisWorker(): AnalysisWorkerControls {
     const reportError = (run: ActiveRun, error: AnalysisError) => {
       const { setAnalysisResult, setEigenError } = useProjectStore.getState();
       if (run.kind === 'static') setAnalysisResult({ type: 'analyze-error', error });
-      else setEigenError(run.kind, error);
+      else setEigenError(run.kind, error, run.model);
     };
 
     if (!workerRef.current) {
@@ -130,7 +130,7 @@ export function useAnalysisWorker(): AnalysisWorkerControls {
       : kind === 'buckling'
         ? { type: 'analyze-buckling', requestId, model, options }
         : { type: 'analyze-all', requestId, model };
-    if (kind !== 'static') useViewStore.getState().setResultsTab(kind);
+    useViewStore.getState().focusResultsForRun(kind);
     beginAnalysisRequest(guardRef.current, requestId);
     activeRunRef.current = { kind, model };
     workerRef.current.postMessage(request);

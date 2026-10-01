@@ -92,6 +92,8 @@ export class ThreeApp {
   private displayMode: DisplayMode = 'model';
   private deformationScale = 50;
   private modeShapeScale = 1;
+  /** Bounding-box diagonal of the model nodes; the reference for mode-shape amplitude. */
+  private modelExtent = 1;
   private animateDeformation = false;
   private deformationAnimationFactor = 1;
   private deformationGeometry: DeformationGeometryState | null = null;
@@ -200,6 +202,9 @@ export class ThreeApp {
 
   setModel(model: ProjectModel): void {
     this.model = model;
+    const bounds = new THREE.Box3();
+    for (const node of model.nodes) bounds.expandByPoint(new THREE.Vector3(node.x, node.y, node.z));
+    this.modelExtent = bounds.isEmpty() ? 1 : Math.max(bounds.getSize(new THREE.Vector3()).length(), 1e-9);
     this.pendingMemberStart = null;
     this.rubberBandTarget = null;
     this.hoveredNodeId = null;
@@ -414,17 +419,11 @@ export class ThreeApp {
     // Mode shapes have a unit peak, so their scale is relative to the model
     // size: a factor of 1 draws the peak at 10 % of the extent.
     const scale = this.displayMode === 'modeShape'
-      ? this.modeShapeScale * 0.1 * this.modelExtent()
+      ? this.modeShapeScale * 0.1 * this.modelExtent
       : this.deformationScale;
     updateDeformationGeometry(this.deformationGeometry, scale * animationFactor);
   }
 
-  private modelExtent(): number {
-    if (!this.model || this.model.nodes.length === 0) return 1;
-    const bounds = new THREE.Box3();
-    for (const node of this.model.nodes) bounds.expandByPoint(new THREE.Vector3(node.x, node.y, node.z));
-    return Math.max(bounds.getSize(new THREE.Vector3()).length(), 1e-9);
-  }
 
   private drawLabels(): void {
     this.labelOverlay.draw({

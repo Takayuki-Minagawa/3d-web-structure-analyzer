@@ -106,10 +106,11 @@ export const NodeEditor: React.FC<{ nodeId: string }> = ({ nodeId }) => {
             <NumberField
               value={item[dof]}
               unit={dof.startsWith('r') ? 'rad' : model.units.length}
-              disabled={!node.restraint[dof]}
+              disabled={!node.restraint[dof] && item[dof] === 0}
               onChange={(value) => updatePrescribedDisplacement(item.id, { [dof]: value })}
             />
           </div>)}
+          {DOF_NAMES.some((dof) => item[dof] !== 0 && !node.restraint[dof]) && <div className="warning-text">{t('prop.prescribedDisplacementUnrestrained')}</div>}
           <button className="danger small" onClick={() => removePrescribedDisplacement(item.id)}>{t('prop.delete')}</button>
         </div>)}
         {!hasRestraint && <div className="muted">{t('prop.prescribedDisplacementNote')}</div>}
@@ -193,6 +194,8 @@ export const MemberEditor: React.FC<{ memberId: string }> = ({ memberId }) => {
             <div className="prop-row"><label>{t('prop.valueEnd')}</label><NumberField value={load.valueEnd} unit={`${model.units.force}/${model.units.length}`} onChange={(valueEnd) => updateMemberLoad(load.id, { valueEnd })} /></div>
             <div className="prop-row"><label>a</label><NumberField value={load.a} unit={model.units.length} onChange={(value) => updateMemberLoad(load.id, { a: Math.max(0, Math.min(length, value)) })} /></div>
             <div className="prop-row"><label>b</label><NumberField value={load.b} unit={model.units.length} onChange={(value) => updateMemberLoad(load.id, { b: Math.max(0, Math.min(length, value)) })} /></div>
+            {!(load.b > load.a) && <div className="warning-text">{t('prop.loadRangeInvalid')}</div>}
+            <div className="prop-actions"><button className="small" disabled={load.a === 0 && load.b === length} onClick={() => updateMemberLoad(load.id, { a: 0, b: length })}>{t('prop.loadRangeFull')}</button></div>
           </>}
           {load.type === 'temperature' && <div className="prop-row"><label>ΔT</label><NumberField value={load.value} onChange={(value) => updateMemberLoad(load.id, { value })} /></div>}
           {load.type === 'selfWeight' && <>
