@@ -211,7 +211,9 @@ export function generateDiagram(
     }
 
     return {
-      N: Nxi + axial.force,
+      // Internal axial force, tension positive: the i-end force Nxi acts on
+      // the member in +x when it compresses the section.
+      N: -(Nxi + axial.force),
       Vy: Vyi + shearY.force,
       Vz: Vzi + shearZ.force,
       Mx: Mxi, // constant: no distributed torque
@@ -266,25 +268,41 @@ function integrateSectionDeflection(
   };
 }
 
+/**
+ * Local displacement at xi = x / L interpolated from the member-end DOFs
+ * [uxi, uyi, uzi, rxi, ryi, rzi, uxj, uyj, uzj, rxj, ryj, rzj] with the
+ * Timoshenko shape functions. Exact for a member without span loads.
+ */
+export function interpolateMemberDisplacement(
+  member: IndexedMember,
+  dLocal: Float64Array,
+  xi: number
+): { ux: number; uy: number; uz: number } {
+  const { L } = member;
+  // Transverse Y: Timoshenko with phi_z, DOFs 1(uyi),5(rzi),7(uyj),11(rzj)
+  const [h1z, h2z, h3z, h4z] = timoshenkoShapeFunctions(xi, L, computePhiZ(member));
+  // Transverse Z: Timoshenko with phi_y, DOFs 2(uzi),4(ryi),8(uzj),10(ryj)
+  // Note: rotation coupling sign is accounted for in the shape function signs
+  const [h1y, h2y, h3y, h4y] = timoshenkoShapeFunctions(xi, L, computePhiY(member));
+  return {
+    ux: dLocal[0]! * (1 - xi) + dLocal[6]! * xi,
+    uy: dLocal[1]! * h1z + dLocal[5]! * h2z + dLocal[7]! * h3z + dLocal[11]! * h4z,
+    uz: dLocal[2]! * h1y + (-dLocal[4]!) * h2y + dLocal[8]! * h3y + (-dLocal[10]!) * h4y,
+  };
+}
+
 function interpolateNodalDeflection(
   member: IndexedMember,
   positions: readonly number[],
   dLocal: Float64Array
 ): { uy: number[]; uz: number[] } {
   const { L } = member;
-  const phiY = computePhiY(member);
-  const phiZ = computePhiZ(member);
   const uy: number[] = [];
   const uz: number[] = [];
   for (const x of positions) {
-    const xi = L > 0 ? x / L : 0;
-    // Transverse Y: Timoshenko with phi_z, DOFs 1(uyi),5(rzi),7(uyj),11(rzj)
-    const [h1z, h2z, h3z, h4z] = timoshenkoShapeFunctions(xi, L, phiZ);
-    uy.push(dLocal[1]! * h1z + dLocal[5]! * h2z + dLocal[7]! * h3z + dLocal[11]! * h4z);
-    // Transverse Z: Timoshenko with phi_y, DOFs 2(uzi),4(ryi),8(uzj),10(ryj)
-    // Note: rotation coupling sign is accounted for in the shape function signs
-    const [h1y, h2y, h3y, h4y] = timoshenkoShapeFunctions(xi, L, phiY);
-    uz.push(dLocal[2]! * h1y + (-dLocal[4]!) * h2y + dLocal[8]! * h3y + (-dLocal[10]!) * h4y);
+    const displacement = interpolateMemberDisplacement(member, dLocal, L > 0 ? x / L : 0);
+    uy.push(displacement.uy);
+    uz.push(displacement.uz);
   }
   return { uy, uz };
 }

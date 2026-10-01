@@ -157,7 +157,7 @@ describe('trapezoidal and partial distributed member loads', () => {
 
     expect(result.displacements[6 + 2]).toBeCloseTo(expectedTip, 10);
     const diagram = result.diagrams.get('beam')!;
-    expect(diagram.points.at(-1)!.uz).toBeCloseTo(expectedTip, 10);
+    expect(diagram.points[diagram.points.length - 1]!.uz).toBeCloseTo(expectedTip, 10);
     // The diagram samples both ends of the loaded range.
     expect(diagram.points.some((point) => point.x === a)).toBe(true);
     expect(diagram.points.some((point) => point.x === b)).toBe(true);
@@ -254,7 +254,7 @@ describe('member deflection curves', () => {
     expect(midpoint.uz).toBeCloseTo(5 * w * L ** 4 / (384 * E * Iy), 10);
     expect(Math.abs(midpoint.My)).toBeCloseTo(Math.abs(w) * L * L / 8, 9);
     expect(diagram.points[0]!.uz).toBe(0);
-    expect(diagram.points.at(-1)!.uz).toBeCloseTo(0, 12);
+    expect(diagram.points[diagram.points.length - 1]!.uz).toBeCloseTo(0, 12);
   });
 
   it('adds the shear deflection of a simply supported beam under a point load', () => {

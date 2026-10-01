@@ -33,7 +33,9 @@ export function getThreeLocalAxes(
 /**
  * Direction in which a force diagram is offset from the member axis.
  * Shear diagrams follow their force component. Bending diagrams lie in the
- * corresponding bending plane (My in local X-Z, Mz in local X-Y).
+ * corresponding bending plane (My in local X-Z, Mz in local X-Y) and are
+ * drawn on the tension side: positive Mz stretches the +y fibre, while
+ * positive My (right-hand rule about y) stretches the -z fibre.
  */
 export function getDiagramOffsetDirection(
   mode: DisplayMode,
@@ -43,8 +45,9 @@ export function getDiagramOffsetDirection(
     case 'Vy':
     case 'Mz':
       return axes.y.clone();
-    case 'Vz':
     case 'My':
+      return axes.z.clone().negate();
+    case 'Vz':
       return axes.z.clone();
     case 'N':
     case 'Mx':

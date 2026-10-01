@@ -68,7 +68,7 @@ describe('prescribed support displacements', () => {
     const endForces = result.elementEndForces.get('beam')!;
     expect(Math.abs(endForces[1]!)).toBeCloseTo(12 * EI * Math.abs(delta) / L ** 3, 8);
     const diagram = result.diagrams.get('beam')!;
-    expect(diagram.points.at(-1)!.uy).toBeCloseTo(delta, 12);
+    expect(diagram.points[diagram.points.length - 1]!.uy).toBeCloseTo(delta, 12);
   });
 
   it('produces 3EIδ/L³ for a propped cantilever whose roller settles', () => {

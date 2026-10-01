@@ -424,6 +424,66 @@ export interface AnalysisResult {
   warnings: string[];
 }
 
+/** Normalized deformed shape of one eigenmode (largest translation = 1). */
+export interface ModeShape {
+  /** Displacements of the model's own nodes, 6 per node. */
+  displacements: Float64Array;
+  /** Local deflection samples along each member; section forces are zero. */
+  diagrams: Map<MemberId, DiagramSeries>;
+}
+
+export type DirectionTriple = [x: number, y: number, z: number];
+
+export interface ModalMode {
+  /** 1-based mode number in ascending frequency order. */
+  index: number;
+  /** Circular frequency ω [rad/s]. */
+  omega: number;
+  /** Natural frequency f = ω / 2π [Hz]. */
+  frequency: number;
+  /** Natural period T = 1 / f [s]. */
+  period: number;
+  /** Participation factors for unit-normalized mode shapes, per global direction. */
+  participation: DirectionTriple;
+  /** Effective modal mass divided by the total mass, per global direction. */
+  effectiveMassRatio: DirectionTriple;
+  shape: ModeShape;
+}
+
+export interface ModalAnalysisOutput {
+  modes: ModalMode[];
+  /** Total translational mass per global direction, including supported nodes. */
+  totalMass: DirectionTriple;
+  /** Number of elements each member was subdivided into. */
+  divisions: number;
+  freeDofCount: number;
+  warnings: string[];
+}
+
+export interface BucklingMode {
+  /** 1-based mode number in ascending load-factor order. */
+  index: number;
+  /** Critical multiplier λ of the reference load set. */
+  loadFactor: number;
+  shape: ModeShape;
+}
+
+export interface BucklingAnalysisOutput {
+  modes: BucklingMode[];
+  /** Load case or combination whose axial forces define the reference state. */
+  target: AnalysisTarget;
+  divisions: number;
+  freeDofCount: number;
+  warnings: string[];
+}
+
+export interface EigenAnalysisOptions {
+  /** Number of modes to report. */
+  modeCount?: number;
+  /** Elements per member; 'auto' picks the finest affordable subdivision. */
+  divisions?: number | 'auto';
+}
+
 export type DofName = 'ux' | 'uy' | 'uz' | 'rx' | 'ry' | 'rz';
 export type ReleasedMemberMode = 'localXTwist' | 'localYBending' | 'localZBending';
 

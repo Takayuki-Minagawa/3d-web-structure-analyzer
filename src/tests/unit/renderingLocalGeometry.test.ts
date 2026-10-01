@@ -23,7 +23,9 @@ describe('rendering local geometry', () => {
     expect(vz.x).toBeCloseTo(0);
     expect(vz.y).toBeCloseTo(-1);
     expect(vz.z).toBeCloseTo(0);
-    expect(my.equals(vz)).toBe(true);
+    // Moment diagrams are drawn on the tension side: +Mz stretches the +y
+    // fibre, +My stretches the -z fibre.
+    expect(my.equals(vz.clone().negate())).toBe(true);
     expect(mz.equals(vy)).toBe(true);
   });
 
