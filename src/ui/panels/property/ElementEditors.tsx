@@ -8,35 +8,28 @@ import type {
 import { get2dModeConfig, getAnalysisMode, getDefaultMemberLoadDirectionForMode } from '../../../core/model/analysisMode';
 import { getActiveLoadCaseId, getLoadCases } from '../../../core/model/loadCases';
 import { memberLabel, nodeLabel } from '../../../core/model/displayNumbers';
+import {
+  DOF_NAMES,
+  FREE_RESTRAINT,
+  restraintFromPreset,
+  restraintPresetName,
+} from '../../../core/model/restraints';
 import { formatEngineering } from '../../../core/formatEngineering';
 import { useT } from '../../../i18n';
 import { useProjectStore } from '../../../state/projectStore';
 import { useSelectionStore } from '../../../state/selectionStore';
 
-const DOFS = ['ux', 'uy', 'uz', 'rx', 'ry', 'rz'] as const;
-const FREE: Restraint = { ux: false, uy: false, uz: false, rx: false, ry: false, rz: false };
-const PIN: Restraint = { ux: true, uy: true, uz: true, rx: false, ry: false, rz: false };
-const FIXED: Restraint = { ux: true, uy: true, uz: true, rx: true, ry: true, rz: true };
-const ROLLER_Z: Restraint = { ux: false, uy: false, uz: true, rx: false, ry: false, rz: false };
 
 function NumberField({ value, unit, onChange, disabled }: { value: number; unit?: string; onChange: (value: number) => void; disabled?: boolean }) {
   return <span className="unit-input"><input type="number" value={value} disabled={disabled} onChange={(event) => onChange(Number(event.target.value))} />{unit && <span>{unit}</span>}</span>;
 }
 
 function restraintPreset(restraint: Restraint): string {
-  if (DOFS.every((dof) => restraint[dof])) return 'fixed';
-  if (['ux', 'uy', 'uz'].every((dof) => restraint[dof as keyof Restraint]) && ['rx', 'ry', 'rz'].every((dof) => !restraint[dof as keyof Restraint])) return 'pin';
-  if (restraint.uz && DOFS.filter((dof) => dof !== 'uz').every((dof) => !restraint[dof])) return 'roller-z';
-  if (DOFS.every((dof) => !restraint[dof])) return 'free';
-  return 'custom';
+  return restraintPresetName(restraint) ?? 'custom';
 }
 
 function presetRestraint(value: string, current: Restraint): Restraint {
-  if (value === 'fixed') return { ...FIXED };
-  if (value === 'pin') return { ...PIN };
-  if (value === 'roller-z') return { ...ROLLER_Z };
-  if (value === 'free') return { ...FREE };
-  return current;
+  return restraintFromPreset(value) ?? current;
 }
 
 export const NodeEditor: React.FC<{ nodeId: string }> = ({ nodeId }) => {
@@ -50,12 +43,21 @@ export const NodeEditor: React.FC<{ nodeId: string }> = ({ nodeId }) => {
   const addNodalLoad = useProjectStore((state) => state.addNodalLoad);
   const updateNodalLoad = useProjectStore((state) => state.updateNodalLoad);
   const removeNodalLoad = useProjectStore((state) => state.removeNodalLoad);
+  const addPrescribedDisplacement = useProjectStore((state) => state.addPrescribedDisplacement);
+  const updatePrescribedDisplacement = useProjectStore((state) => state.updatePrescribedDisplacement);
+  const removePrescribedDisplacement = useProjectStore((state) => state.removePrescribedDisplacement);
+  const addNodeMass = useProjectStore((state) => state.addNodeMass);
+  const updateNodeMass = useProjectStore((state) => state.updateNodeMass);
+  const removeNodeMass = useProjectStore((state) => state.removeNodeMass);
   const clearSelection = useSelectionStore((state) => state.clearSelection);
   const node = model.nodes.find((candidate) => candidate.id === nodeId);
   if (!node) return null;
   const locked = get2dModeConfig(getAnalysisMode(model))?.lockedCoordinate;
   const loads = model.nodalLoads.filter((load) => load.nodeId === nodeId);
   const nodeSprings = (model.nodeSprings ?? []).filter((spring) => spring.nodeId === nodeId);
+  const prescribed = (model.prescribedDisplacements ?? []).filter((item) => item.nodeId === nodeId);
+  const nodeMasses = (model.nodeMasses ?? []).filter((item) => item.nodeId === nodeId);
+  const hasRestraint = DOF_NAMES.some((dof) => node.restraint[dof]);
   const cases = getLoadCases(model);
 
   return (
@@ -69,7 +71,7 @@ export const NodeEditor: React.FC<{ nodeId: string }> = ({ nodeId }) => {
         <div className="prop-title">{t('prop.nodeSprings')}</div>
         {nodeSprings.map((spring, index) => <div className="load-item" key={spring.id}>
           <div className="muted">{t('prop.spring')} {index + 1}</div>
-          {DOFS.map((dof) => <div className="prop-row" key={dof}>
+          {DOF_NAMES.map((dof) => <div className="prop-row" key={dof}>
             <label>k{dof}</label>
             <NumberField
               value={spring[dof]}
@@ -84,7 +86,7 @@ export const NodeEditor: React.FC<{ nodeId: string }> = ({ nodeId }) => {
       <section className="prop-group">
         <div className="prop-title">{t('prop.restraints')}</div>
         <div className="prop-row"><label>{t('prop.supportPreset')}</label><select value={restraintPreset(node.restraint)} onChange={(event) => updateNode(node.id, { restraint: presetRestraint(event.target.value, node.restraint) })}><option value="free">{t('prop.supportFree')}</option><option value="pin">{t('prop.supportPin')}</option><option value="roller-z">{t('prop.supportRollerZ')}</option><option value="fixed">{t('prop.supportFixed')}</option>{restraintPreset(node.restraint) === 'custom' && <option value="custom">{t('prop.supportCustom')}</option>}</select></div>
-        <div className="dof-grid">{DOFS.map((dof) => <label key={dof}><input type="checkbox" checked={node.restraint[dof]} onChange={(event) => updateNode(node.id, { restraint: { ...node.restraint, [dof]: event.target.checked } })} />{dof}</label>)}</div>
+        <div className="dof-grid">{DOF_NAMES.map((dof) => <label key={dof}><input type="checkbox" checked={node.restraint[dof]} onChange={(event) => updateNode(node.id, { restraint: { ...node.restraint, [dof]: event.target.checked } })} />{dof}</label>)}</div>
       </section>
       <section className="prop-group">
         <div className="prop-title">{t('prop.nodalLoads')}</div>
@@ -94,6 +96,33 @@ export const NodeEditor: React.FC<{ nodeId: string }> = ({ nodeId }) => {
           <button className="danger small" onClick={() => removeNodalLoad(load.id)}>{t('prop.removeLoad')}</button>
         </div>)}
         <div className="prop-actions"><button onClick={() => addNodalLoad({ nodeId, loadCaseId: getActiveLoadCaseId(model), fx: 0, fy: 0, fz: 0, mx: 0, my: 0, mz: 0 })}>{t('prop.addLoad')}</button></div>
+      </section>
+      <section className="prop-group">
+        <div className="prop-title">{t('prop.prescribedDisplacements')}</div>
+        {prescribed.map((item) => <div className="load-item" key={item.id}>
+          <div className="prop-row"><label>{t('prop.loadCase')}</label><select value={item.loadCaseId} onChange={(event) => updatePrescribedDisplacement(item.id, { loadCaseId: event.target.value })}>{cases.map((loadCase) => <option key={loadCase.id} value={loadCase.id}>{loadCase.name}</option>)}</select></div>
+          {DOF_NAMES.map((dof) => <div className="prop-row" key={dof}>
+            <label>{dof}</label>
+            <NumberField
+              value={item[dof]}
+              unit={dof.startsWith('r') ? 'rad' : model.units.length}
+              disabled={!node.restraint[dof]}
+              onChange={(value) => updatePrescribedDisplacement(item.id, { [dof]: value })}
+            />
+          </div>)}
+          <button className="danger small" onClick={() => removePrescribedDisplacement(item.id)}>{t('prop.delete')}</button>
+        </div>)}
+        {!hasRestraint && <div className="muted">{t('prop.prescribedDisplacementNote')}</div>}
+        <div className="prop-actions"><button disabled={!hasRestraint} onClick={() => addPrescribedDisplacement({ nodeId, loadCaseId: getActiveLoadCaseId(model), ux: 0, uy: 0, uz: 0, rx: 0, ry: 0, rz: 0 })}>{t('prop.addPrescribedDisplacement')}</button></div>
+      </section>
+      <section className="prop-group">
+        <div className="prop-title">{t('prop.nodeMasses')}</div>
+        {nodeMasses.map((item) => <div className="load-item" key={item.id}>
+          <div className="prop-row"><label>m</label><NumberField value={item.mass} onChange={(value) => updateNodeMass(item.id, { mass: Math.max(0, value) })} /></div>
+          <button className="danger small" onClick={() => removeNodeMass(item.id)}>{t('prop.delete')}</button>
+        </div>)}
+        <div className="muted">{t('prop.nodeMassNote')}</div>
+        <div className="prop-actions"><button onClick={() => addNodeMass({ nodeId, mass: 0 })}>{t('prop.addNodeMass')}</button></div>
       </section>
       <div className="prop-actions"><button className="danger" onClick={() => { removeNode(node.id); clearSelection(); }}>{t('prop.deleteNode')}</button></div>
     </div>
@@ -132,6 +161,8 @@ export const MemberEditor: React.FC<{ memberId: string }> = ({ memberId }) => {
       replaceMemberLoad(load.id, { memberId, loadCaseId, type, direction: previousDirection, value: previousValue, a: length / 2 });
     } else if (type === 'udl') {
       replaceMemberLoad(load.id, { memberId, loadCaseId, type, direction: previousDirection, value: previousValue });
+    } else if (type === 'trapezoid') {
+      replaceMemberLoad(load.id, { memberId, loadCaseId, type, direction: previousDirection, value: previousValue, valueEnd: previousValue, a: 0, b: length });
     } else if (type === 'temperature') {
       replaceMemberLoad(load.id, { memberId, loadCaseId, type, direction: 'localX', value: previousValue });
     } else {
@@ -153,10 +184,15 @@ export const MemberEditor: React.FC<{ memberId: string }> = ({ memberId }) => {
         <div className="prop-title">{t('prop.memberLoads')}</div>
         {loads.map((load) => <div className="load-item" key={load.id}>
           <div className="prop-row"><label>{t('prop.loadCase')}</label><select value={load.loadCaseId} onChange={(event) => updateMemberLoad(load.id, { loadCaseId: event.target.value })}>{cases.map((loadCase) => <option key={loadCase.id} value={loadCase.id}>{loadCase.name}</option>)}</select></div>
-          <div className="prop-row"><label>{t('prop.loadType')}</label><select value={load.type} onChange={(event) => changeLoadType(load, event.target.value as MemberLoad['type'])}><option value="udl">{t('prop.loadTypeUdl')}</option><option value="point">{t('prop.loadTypePoint')}</option><option value="cmq">{t('prop.loadTypeCmq')}</option><option value="temperature">{t('prop.loadTypeTemperature')}</option><option value="selfWeight">{t('prop.loadTypeSelfWeight')}</option></select></div>
-          {(load.type === 'point' || load.type === 'udl') && <>
+          <div className="prop-row"><label>{t('prop.loadType')}</label><select value={load.type} onChange={(event) => changeLoadType(load, event.target.value as MemberLoad['type'])}><option value="udl">{t('prop.loadTypeUdl')}</option><option value="trapezoid">{t('prop.loadTypeTrapezoid')}</option><option value="point">{t('prop.loadTypePoint')}</option><option value="cmq">{t('prop.loadTypeCmq')}</option><option value="temperature">{t('prop.loadTypeTemperature')}</option><option value="selfWeight">{t('prop.loadTypeSelfWeight')}</option></select></div>
+          {(load.type === 'point' || load.type === 'udl' || load.type === 'trapezoid') && <>
             <div className="prop-row"><label>{t('prop.loadDirection')}</label><select value={load.direction} onChange={(event) => updateMemberLoad(load.id, { direction: event.target.value as MemberLoadDirection })}>{MEMBER_LOAD_DIRECTIONS.map((direction) => <option key={direction}>{direction}</option>)}</select></div>
-            <div className="prop-row"><label>{t('prop.value')}</label><NumberField value={load.value} unit={load.type === 'udl' ? `${model.units.force}/${model.units.length}` : model.units.force} onChange={(value) => updateMemberLoad(load.id, { value })} /></div>
+            <div className="prop-row"><label>{load.type === 'trapezoid' ? t('prop.valueStart') : t('prop.value')}</label><NumberField value={load.value} unit={load.type === 'point' ? model.units.force : `${model.units.force}/${model.units.length}`} onChange={(value) => updateMemberLoad(load.id, { value })} /></div>
+          </>}
+          {load.type === 'trapezoid' && <>
+            <div className="prop-row"><label>{t('prop.valueEnd')}</label><NumberField value={load.valueEnd} unit={`${model.units.force}/${model.units.length}`} onChange={(valueEnd) => updateMemberLoad(load.id, { valueEnd })} /></div>
+            <div className="prop-row"><label>a</label><NumberField value={load.a} unit={model.units.length} onChange={(value) => updateMemberLoad(load.id, { a: Math.max(0, Math.min(length, value)) })} /></div>
+            <div className="prop-row"><label>b</label><NumberField value={load.b} unit={model.units.length} onChange={(value) => updateMemberLoad(load.id, { b: Math.max(0, Math.min(length, value)) })} /></div>
           </>}
           {load.type === 'temperature' && <div className="prop-row"><label>ΔT</label><NumberField value={load.value} onChange={(value) => updateMemberLoad(load.id, { value })} /></div>}
           {load.type === 'selfWeight' && <>
@@ -184,7 +220,7 @@ export const BulkEditor: React.FC<{ nodeIds: Set<string>; memberIds: Set<string>
   const clearSelection = useSelectionStore((state) => state.clearSelection);
   return <div className="element-editor"><h4>{t('prop.bulkEdit')}</h4>
     <div className="prop-group"><div className="prop-row"><label>{t('prop.selection')}</label><span>{nodeIds.size} {t('prop.nodesShort')} / {memberIds.size} {t('prop.membersShort')}</span></div>
-      {nodeIds.size > 0 && <div className="prop-row"><label>{t('prop.supports')}</label><select defaultValue="" onChange={(event) => event.target.value && updateNodes(nodeIds, { restraint: presetRestraint(event.target.value, FREE) })}><option value="">—</option><option value="free">{t('prop.supportFree')}</option><option value="pin">{t('prop.supportPin')}</option><option value="roller-z">{t('prop.supportRollerZ')}</option><option value="fixed">{t('prop.supportFixed')}</option></select></div>}
+      {nodeIds.size > 0 && <div className="prop-row"><label>{t('prop.supports')}</label><select defaultValue="" onChange={(event) => event.target.value && updateNodes(nodeIds, { restraint: presetRestraint(event.target.value, { ...FREE_RESTRAINT }) })}><option value="">—</option><option value="free">{t('prop.supportFree')}</option><option value="pin">{t('prop.supportPin')}</option><option value="roller-z">{t('prop.supportRollerZ')}</option><option value="fixed">{t('prop.supportFixed')}</option></select></div>}
       {memberIds.size > 0 && <div className="prop-row"><label>{t('prop.section')}</label><select defaultValue="" onChange={(event) => event.target.value && updateMembers(memberIds, { sectionId: event.target.value })}><option value="">—</option>{model.sections.map((section) => <option key={section.id} value={section.id}>{section.name}</option>)}</select></div>}
     </div>
     <div className="prop-actions"><button className="danger" onClick={() => { memberIds.forEach(removeMember); nodeIds.forEach(removeNode); clearSelection(); }}>{t('prop.deleteSelection')}</button></div>

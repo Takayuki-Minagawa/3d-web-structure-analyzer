@@ -1,6 +1,7 @@
 import type { IndexedModel } from '../model/types';
 import { buildLocalStiffness, applyEndReleases } from './element3dFrame';
 import { buildTransformationMatrix, transformToGlobal } from './transforms';
+import { dofValues } from '../model/restraints';
 
 const MEMBER_DOF = 12;
 
@@ -40,7 +41,7 @@ export function assembleGlobalStiffness(model: IndexedModel): Float64Array {
   // Diagonal support springs are expressed in global nodal DOF order. A
   // spring attached to a coupled slave contributes to the effective master.
   for (const spring of model.nodeSprings) {
-    const stiffnesses = [spring.ux, spring.uy, spring.uz, spring.rx, spring.ry, spring.rz];
+    const stiffnesses = dofValues(spring);
     const base = spring.nodeIndex * 6;
     for (let localDof = 0; localDof < 6; localDof++) {
       const stiffness = stiffnesses[localDof]!;

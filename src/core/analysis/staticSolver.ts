@@ -1,0 +1,193 @@
+import type { AnalysisOutput, IndexedModel } from '../model/types';
+import { dofValues } from '../model/restraints';
+import { assembleGlobalStiffness } from './assembly';
+import { buildGlobalForceVector, groupMemberLoadsByMember } from './loads';
+import { partitionDofs, extractFreeSystem } from './constraints';
+import {
+  factorLDLt,
+  SingularMatrixError,
+  solveLDLtWithFactor,
+  type LDLtFactorization,
+} from './solverDense';
+import { computeReactions, computeAllElementEndForces } from './recover';
+import { generateAllDiagrams } from './diagrams';
+import { createSingularStabilityDiagnostics } from './stabilityDiagnostics';
+import { createAnalysisException } from './analysisError';
+
+const MAX_TRANSLATION_LENGTH_RATIO = 100;
+const MAX_ROTATION_RADIANS = 100;
+
+/**
+ * Stiffness-side state shared by every load set of one structural model:
+ * the assembled matrix, the DOF partition and the factorized free block.
+ */
+export interface StaticSystem {
+  K: Float64Array;
+  freeDofs: number[];
+  fixedDofs: number[];
+  /** Null when the model has no free DOF. */
+  factorization: LDLtFactorization | null;
+}
+
+/**
+ * Assemble and factor the stiffness matrix once. Throws a `singular`
+ * AnalysisException carrying stability diagnostics for unstable models.
+ */
+export function prepareStaticSystem(model: IndexedModel): StaticSystem {
+  const K = assembleGlobalStiffness(model);
+  const { freeDofs, fixedDofs } = partitionDofs(model);
+  if (freeDofs.length === 0) return { K, freeDofs, fixedDofs, factorization: null };
+
+  const { Kff } = extractFreeSystem(
+    K,
+    new Float64Array(model.dofCount),
+    freeDofs,
+    model.dofCount
+  );
+  try {
+    const factorization = factorLDLt(Kff, freeDofs.length);
+    return { K, freeDofs, fixedDofs, factorization };
+  } catch (error) {
+    const diagnostics = error instanceof SingularMatrixError
+      ? createSingularStabilityDiagnostics(model, K, freeDofs, error.pivotIndex)
+      : createSingularStabilityDiagnostics(model, K, freeDofs);
+    throw createAnalysisException(
+      'singular',
+      error instanceof Error
+        ? error.message
+        : '剛性マトリクスが特異です。拘束条件を確認してください。',
+      { diagnostics }
+    );
+  }
+}
+
+/**
+ * Collect prescribed displacements into a full-length vector addressed by
+ * effective (coupling-resolved) DOF. Returns null when nothing is prescribed.
+ */
+export function buildPrescribedDisplacementVector(
+  model: IndexedModel,
+  fixedDofs: readonly number[]
+): Float64Array | null {
+  if (model.prescribedDisplacements.length === 0) return null;
+  const prescribed = new Float64Array(model.dofCount);
+  const isFixed = new Uint8Array(model.dofCount);
+  for (const dof of fixedDofs) isFixed[dof] = 1;
+
+  for (const item of model.prescribedDisplacements) {
+    const nodeIndex = model.nodeIdToIndex.get(item.nodeId);
+    if (nodeIndex === undefined) continue;
+    const values = dofValues(item);
+    for (let localDof = 0; localDof < 6; localDof++) {
+      const value = values[localDof]!;
+      if (value === 0) continue;
+      const dof = model.dofMap[nodeIndex * 6 + localDof]!;
+      if (!isFixed[dof]) {
+        throw createAnalysisException(
+          'validation',
+          `強制変位 ${item.id} は拘束されていない自由度に指定されています。`,
+          { nodeId: item.nodeId }
+        );
+      }
+      prescribed[dof] = prescribed[dof]! + value;
+    }
+  }
+  return prescribed;
+}
+
+/**
+ * Solve one load set against a prepared system. `loadModel` must share the
+ * structure of the model the system was prepared from; only its loads and
+ * prescribed displacements may differ.
+ */
+export function solveStaticLoadSet(
+  system: StaticSystem,
+  loadModel: IndexedModel
+): AnalysisOutput {
+  const { K, freeDofs, fixedDofs, factorization } = system;
+  const n = loadModel.dofCount;
+  const F = buildGlobalForceVector(loadModel);
+  const d = new Float64Array(n);
+
+  const prescribed = buildPrescribedDisplacementVector(loadModel, fixedDofs);
+  const movedDofs: number[] = [];
+  if (prescribed) {
+    for (const dof of fixedDofs) {
+      if (prescribed[dof] === 0) continue;
+      d[dof] = prescribed[dof]!;
+      movedDofs.push(dof);
+    }
+  }
+
+  if (factorization) {
+    // K_ff d_f = F_f - K_fc d_c
+    const rhs = new Float64Array(freeDofs.length);
+    for (let i = 0; i < freeDofs.length; i++) {
+      const row = freeDofs[i]! * n;
+      let value = F[freeDofs[i]!]!;
+      for (const dof of movedDofs) value -= K[row + dof]! * d[dof]!;
+      rhs[i] = value;
+    }
+    const df = solveLDLtWithFactor(factorization, rhs);
+    for (let i = 0; i < freeDofs.length; i++) d[freeDofs[i]!] = df[i]!;
+  }
+
+  return completeAnalysisOutput(loadModel, K, F, d, fixedDofs);
+}
+
+/** Complete recovery for a solved displacement vector and prepared K/F pair. */
+export function completeAnalysisOutput(
+  model: IndexedModel,
+  K: Float64Array,
+  F: Float64Array,
+  d: Float64Array,
+  fixedDofs: number[],
+  warnings: string[] = []
+): AnalysisOutput {
+  const { dofMap } = model;
+  for (let i = 0; i < model.dofCount; i++) {
+    if (dofMap[i] !== i) d[i] = d[dofMap[i]!]!;
+  }
+
+  const reactions = computeReactions(
+    K,
+    d,
+    F,
+    model.dofCount,
+    fixedDofs,
+    model.nodeSprings,
+    model.dofMap
+  );
+  const memberLoadsByMember = groupMemberLoadsByMember(model.memberLoads);
+  const elementEndForces = computeAllElementEndForces(model, d, memberLoadsByMember);
+  const diagrams = generateAllDiagrams(model, elementEndForces, d, memberLoadsByMember);
+  appendDisplacementWarnings(model, d, warnings);
+
+  return { displacements: d, reactions, elementEndForces, diagrams, warnings };
+}
+
+function appendDisplacementWarnings(
+  model: IndexedModel,
+  displacements: Float64Array,
+  warnings: string[]
+): void {
+  let representativeLength = 0;
+  for (const member of model.members) {
+    representativeLength = Math.max(representativeLength, member.L);
+  }
+  for (let dof = 0; dof < displacements.length; dof++) {
+    const value = Math.abs(displacements[dof]!);
+    const localDof = dof % 6;
+    const excessive = localDof < 3
+      ? representativeLength > 0 && value / representativeLength > MAX_TRANSLATION_LENGTH_RATIO
+      : value > MAX_ROTATION_RADIANS;
+    if (!excessive) continue;
+    const relative = localDof < 3
+      ? `、代表長さ比 ${(value / representativeLength).toExponential(3)}`
+      : '';
+    warnings.push(
+      `自由度 ${dof} の変位がモデル寸法に対して非常に大きくなっています (${displacements[dof]!.toExponential(3)}${relative})。モデルを確認してください。`
+    );
+    break;
+  }
+}

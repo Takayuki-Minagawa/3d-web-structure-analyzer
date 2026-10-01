@@ -4,9 +4,11 @@ import type {
   LoadCaseId,
   MemberLoad,
   NodalLoad,
+  PrescribedDisplacement,
   ProjectModel,
   AnalysisTarget,
 } from './types';
+import { DOF_NAMES } from './restraints';
 
 export const DEFAULT_LOAD_CASE_ID = 'lc-default';
 export const DEFAULT_LOAD_CASE: LoadCase = {
@@ -39,7 +41,7 @@ export function getActiveLoadCombination(
 }
 
 export function getLoadCaseIdForLoad(
-  load: Pick<NodalLoad | MemberLoad, 'loadCaseId'>,
+  load: Pick<NodalLoad | MemberLoad | PrescribedDisplacement, 'loadCaseId'>,
   model: ProjectModel
 ): LoadCaseId {
   const cases = getLoadCases(model);
@@ -49,26 +51,47 @@ export function getLoadCaseIdForLoad(
     : fallback;
 }
 
+/** Load-carrying part of a model for one analysis target. */
+type LoadSet = Pick<ProjectModel, 'nodalLoads' | 'memberLoads' | 'prescribedDisplacements'>;
+
+function loadSetForCase(model: ProjectModel, loadCaseId: LoadCaseId): LoadSet {
+  const inCase = (load: Pick<NodalLoad, 'loadCaseId'>) =>
+    getLoadCaseIdForLoad(load, model) === loadCaseId;
+  return {
+    nodalLoads: model.nodalLoads.filter(inCase),
+    memberLoads: model.memberLoads.filter(inCase),
+    prescribedDisplacements: (model.prescribedDisplacements ?? []).filter(inCase),
+  };
+}
+
+function loadSetForCombination(model: ProjectModel, combination: LoadCombination): LoadSet {
+  const loadSet: Required<LoadSet> = { nodalLoads: [], memberLoads: [], prescribedDisplacements: [] };
+  for (const term of combination.factors) {
+    if (term.factor === 0) continue;
+    const caseLoads = loadSetForCase(model, term.loadCaseId);
+    const scaledId = (id: string) => `${id}@${term.loadCaseId}*${term.factor}`;
+    for (const load of caseLoads.nodalLoads) {
+      loadSet.nodalLoads.push(scaleNodalLoad(load, scaledId(load.id), term.factor));
+    }
+    for (const load of caseLoads.memberLoads) {
+      loadSet.memberLoads.push(scaleMemberLoad(load, scaledId(load.id), term.factor));
+    }
+    for (const item of caseLoads.prescribedDisplacements ?? []) {
+      loadSet.prescribedDisplacements.push(
+        scalePrescribedDisplacement(item, scaledId(item.id), term.factor)
+      );
+    }
+  }
+  return loadSet;
+}
+
+/** Build a load-only view for the active case or combination selected in the UI. */
 export function resolveAnalysisLoadModel(model: ProjectModel): ProjectModel {
   const activeCombination = getActiveLoadCombination(model);
-  if (!activeCombination) {
-    const activeLoadCaseId = getActiveLoadCaseId(model);
-    return {
-      ...model,
-      nodalLoads: model.nodalLoads.filter(
-        (load) => getLoadCaseIdForLoad(load, model) === activeLoadCaseId
-      ),
-      memberLoads: model.memberLoads.filter(
-        (load) => getLoadCaseIdForLoad(load, model) === activeLoadCaseId
-      ),
-    };
-  }
-
-  return {
-    ...model,
-    nodalLoads: expandNodalLoadsForCombination(model, activeCombination),
-    memberLoads: expandMemberLoadsForCombination(model, activeCombination),
-  };
+  const loadSet = activeCombination
+    ? loadSetForCombination(model, activeCombination)
+    : loadSetForCase(model, getActiveLoadCaseId(model));
+  return { ...model, ...loadSet };
 }
 
 /** Return every independently reportable load case followed by combinations. */
@@ -93,25 +116,13 @@ export function resolveLoadTargetModel(
   target: AnalysisTarget
 ): ProjectModel {
   if (target.type === 'loadCase') {
-    return {
-      ...model,
-      nodalLoads: model.nodalLoads.filter(
-        (load) => getLoadCaseIdForLoad(load, model) === target.id
-      ),
-      memberLoads: model.memberLoads.filter(
-        (load) => getLoadCaseIdForLoad(load, model) === target.id
-      ),
-    };
+    return { ...model, ...loadSetForCase(model, target.id) };
   }
   const combination = getLoadCombinations(model).find((item) => item.id === target.id);
   if (!combination) {
     throw new Error(`荷重組合せ ${target.id} が見つかりません。`);
   }
-  return {
-    ...model,
-    nodalLoads: expandNodalLoadsForCombination(model, combination),
-    memberLoads: expandMemberLoadsForCombination(model, combination),
-  };
+  return { ...model, ...loadSetForCombination(model, combination) };
 }
 
 export function getActiveLoadTargetName(model: ProjectModel): string {
@@ -122,44 +133,10 @@ export function getActiveLoadTargetName(model: ProjectModel): string {
     ?? DEFAULT_LOAD_CASE.name;
 }
 
-function expandNodalLoadsForCombination(
-  model: ProjectModel,
-  combination: LoadCombination
-): NodalLoad[] {
-  const loads: NodalLoad[] = [];
-  for (const term of combination.factors) {
-    if (term.factor === 0) continue;
-    for (const load of model.nodalLoads) {
-      if (getLoadCaseIdForLoad(load, model) !== term.loadCaseId) continue;
-      loads.push(scaleNodalLoad(load, term.loadCaseId, term.factor));
-    }
-  }
-  return loads;
-}
-
-function expandMemberLoadsForCombination(
-  model: ProjectModel,
-  combination: LoadCombination
-): MemberLoad[] {
-  const loads: MemberLoad[] = [];
-  for (const term of combination.factors) {
-    if (term.factor === 0) continue;
-    for (const load of model.memberLoads) {
-      if (getLoadCaseIdForLoad(load, model) !== term.loadCaseId) continue;
-      loads.push(scaleMemberLoad(load, term.loadCaseId, term.factor));
-    }
-  }
-  return loads;
-}
-
-function scaleNodalLoad(
-  load: NodalLoad,
-  loadCaseId: LoadCaseId,
-  factor: number
-): NodalLoad {
+function scaleNodalLoad(load: NodalLoad, id: string, factor: number): NodalLoad {
   return {
     ...load,
-    id: `${load.id}@${loadCaseId}*${factor}`,
+    id,
     fx: load.fx * factor,
     fy: load.fy * factor,
     fz: load.fz * factor,
@@ -169,18 +146,22 @@ function scaleNodalLoad(
   };
 }
 
-function scaleMemberLoad(
-  load: MemberLoad,
-  loadCaseId: LoadCaseId,
+function scalePrescribedDisplacement(
+  item: PrescribedDisplacement,
+  id: string,
   factor: number
-): MemberLoad {
-  const id = `${load.id}@${loadCaseId}*${factor}`;
+): PrescribedDisplacement {
+  const scaled = { ...item, id };
+  for (const dof of DOF_NAMES) scaled[dof] = item[dof] * factor;
+  return scaled;
+}
+
+function scaleMemberLoad(load: MemberLoad, id: string, factor: number): MemberLoad {
+  if (load.type === 'trapezoid') {
+    return { ...load, id, value: load.value * factor, valueEnd: load.valueEnd * factor };
+  }
   if (load.type !== 'cmq') {
-    return {
-      ...load,
-      id,
-      value: load.value * factor,
-    };
+    return { ...load, id, value: load.value * factor };
   }
 
   return {

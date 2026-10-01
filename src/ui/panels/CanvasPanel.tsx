@@ -8,11 +8,14 @@ import {
   getAnalysisMode,
   getDefaultMemberLoadDirectionForMode,
 } from '../../core/model/analysisMode';
+import {
+  FIXED_RESTRAINT,
+  FREE_RESTRAINT,
+  PINNED_RESTRAINT,
+  restraintPresetName,
+} from '../../core/model/restraints';
 import { useT } from '../../i18n';
 
-const FIXED_RESTRAINT = { ux: true, uy: true, uz: true, rx: true, ry: true, rz: true };
-const PINNED_RESTRAINT = { ux: true, uy: true, uz: true, rx: false, ry: false, rz: false };
-const FREE_RESTRAINT = { ux: false, uy: false, uz: false, rx: false, ry: false, rz: false };
 
 interface CaptureRequestDetail {
   resolve: (dataUrl: string) => void;
@@ -87,12 +90,9 @@ export const CanvasPanel: React.FC = () => {
       case 'setSupport': {
         const node = useProjectStore.getState().model.nodes.find(n => n.id === action.nodeId);
         if (!node) break;
-        const isFree = !node.restraint.ux && !node.restraint.uy && !node.restraint.uz
-          && !node.restraint.rx && !node.restraint.ry && !node.restraint.rz;
-        const isPinned = node.restraint.ux && node.restraint.uy && node.restraint.uz
-          && !node.restraint.rx && !node.restraint.ry && !node.restraint.rz;
-        const restraint = isFree ? PINNED_RESTRAINT : isPinned ? FIXED_RESTRAINT : FREE_RESTRAINT;
-        updateNode(action.nodeId, { restraint });
+        const preset = restraintPresetName(node.restraint);
+        const next = preset === 'free' ? PINNED_RESTRAINT : preset === 'pin' ? FIXED_RESTRAINT : FREE_RESTRAINT;
+        updateNode(action.nodeId, { restraint: { ...next } });
         selectNode(action.nodeId);
         break;
       }

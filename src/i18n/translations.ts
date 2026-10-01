@@ -391,6 +391,15 @@ const ja = {
   'canvas.snap': 'スナップ',
   'canvas.spacing': '間隔',
   'canvas.focusSelection': '選択へフォーカス',
+  'prop.loadTypeTrapezoid': '台形・部分分布',
+  'prop.valueStart': '始点値 w1',
+  'prop.valueEnd': '終点値 w2',
+  'prop.prescribedDisplacements': '強制変位（支点沈下）',
+  'prop.addPrescribedDisplacement': '強制変位追加',
+  'prop.prescribedDisplacementNote': '強制変位は支持条件で固定した自由度にのみ指定できます。',
+  'prop.nodeMasses': '節点質量（固有値解析用）',
+  'prop.addNodeMass': '質量追加',
+  'prop.nodeMassNote': '力・長さ単位と整合する質量（力·s²/長さ）を入力します。X/Y/Z並進に作用します。',
 } as const;
 
 const en: Record<keyof typeof ja, string> = {
@@ -765,6 +774,15 @@ const en: Record<keyof typeof ja, string> = {
   'canvas.snap': 'Snap',
   'canvas.spacing': 'Spacing',
   'canvas.focusSelection': 'Focus selection',
+  'prop.loadTypeTrapezoid': 'Trapezoid / partial',
+  'prop.valueStart': 'Start w1',
+  'prop.valueEnd': 'End w2',
+  'prop.prescribedDisplacements': 'Prescribed Displacements',
+  'prop.addPrescribedDisplacement': 'Add Displacement',
+  'prop.prescribedDisplacementNote': 'Prescribed displacements apply only to restrained DOFs.',
+  'prop.nodeMasses': 'Nodal Masses (modal)',
+  'prop.addNodeMass': 'Add Mass',
+  'prop.nodeMassNote': 'Enter mass consistent with the force/length units (force·s²/length). It acts in X/Y/Z translation.',
 };
 
 export type TKey = keyof typeof ja;

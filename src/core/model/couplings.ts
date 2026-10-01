@@ -1,6 +1,5 @@
-import type { CouplingConstraint, ProjectModel } from './types';
-
-const COUPLING_DOF_KEYS = ['ux', 'uy', 'uz', 'rx', 'ry', 'rz'] as const;
+import type { ProjectModel } from './types';
+import { DOF_NAMES, dofValues } from './restraints';
 
 export type CouplingIssueKind =
   | 'missing-master'
@@ -18,10 +17,6 @@ export interface CouplingIssue {
 interface DofParentBuildResult {
   parent: Int32Array;
   issues: CouplingIssue[];
-}
-
-function couplingFlags(coupling: CouplingConstraint): boolean[] {
-  return COUPLING_DOF_KEYS.map((key) => coupling[key]);
 }
 
 function buildDirectDofParents(
@@ -54,7 +49,7 @@ function buildDirectDofParents(
     }
     if (masterIndex === undefined || slaveIndex === undefined) continue;
 
-    const flags = couplingFlags(coupling);
+    const flags = dofValues(coupling);
     if (masterIndex === slaveIndex && flags.some(Boolean)) {
       issues.push({
         kind: 'self-coupling',
@@ -73,7 +68,7 @@ function buildDirectDofParents(
         issues.push({
           kind: 'duplicate-slave',
           couplingId: coupling.id,
-          message: `節点 ${coupling.slaveNodeId} の ${COUPLING_DOF_KEYS[localDof]} はカップリング ${previous.couplingId} と ${coupling.id} で重複してスレーブに指定されています。`,
+          message: `節点 ${coupling.slaveNodeId} の ${DOF_NAMES[localDof]} はカップリング ${previous.couplingId} と ${coupling.id} で重複してスレーブに指定されています。`,
         });
         continue;
       }
@@ -101,7 +96,7 @@ function buildDirectDofParents(
           couplingId: owner?.couplingId ?? '',
           message: `カップリング ${cycleDofs.map((dof) => {
             const node = model.nodes[Math.floor(dof / 6)];
-            return `${node?.id ?? '?'}:${COUPLING_DOF_KEYS[dof % 6]}`;
+            return `${node?.id ?? '?'}:${DOF_NAMES[dof % 6]}`;
           }).join(' → ')} が循環しています。`,
         });
         return { parent, issues };

@@ -3,6 +3,7 @@ import type { AnalysisMode } from '../../../core/model/types';
 import { get2dModeConfig, getAnalysisMode } from '../../../core/model/analysisMode';
 import { getActiveLoadCaseId, getLoadCases, getLoadCombinations } from '../../../core/model/loadCases';
 import { nodeLabel } from '../../../core/model/displayNumbers';
+import { DOF_NAMES } from '../../../core/model/restraints';
 import { useT } from '../../../i18n';
 import { useProjectStore, type AnalysisModeUpdateResult } from '../../../state/projectStore';
 import { useSelectionStore } from '../../../state/selectionStore';
@@ -80,13 +81,12 @@ export const CouplingsEditor: React.FC = () => {
   const addCoupling = useProjectStore((state) => state.addCoupling);
   const updateCoupling = useProjectStore((state) => state.updateCoupling);
   const removeCoupling = useProjectStore((state) => state.removeCoupling);
-  const dofs = ['ux', 'uy', 'uz', 'rx', 'ry', 'rz'] as const;
   return <div className="project-editor">
     {(model.couplings ?? []).length === 0 && <div className="muted">{t('prop.noCouplings')}</div>}
     {(model.couplings ?? []).map((coupling) => <div className="editable-item" key={coupling.id}>
       <div className="prop-row"><label>{t('prop.masterNode')}</label><select value={coupling.masterNodeId} onChange={(event) => updateCoupling(coupling.id, { masterNodeId: event.target.value })}>{model.nodes.map((node) => <option key={node.id} value={node.id}>{nodeLabel(node)}</option>)}</select></div>
       <div className="prop-row"><label>{t('prop.slaveNode')}</label><select value={coupling.slaveNodeId} onChange={(event) => updateCoupling(coupling.id, { slaveNodeId: event.target.value })}>{model.nodes.map((node) => <option key={node.id} value={node.id}>{nodeLabel(node)}</option>)}</select></div>
-      <div className="dof-grid">{dofs.map((dof) => <label key={dof}><input type="checkbox" checked={coupling[dof]} onChange={(event) => updateCoupling(coupling.id, { [dof]: event.target.checked })} />{dof}</label>)}</div>
+      <div className="dof-grid">{DOF_NAMES.map((dof) => <label key={dof}><input type="checkbox" checked={coupling[dof]} onChange={(event) => updateCoupling(coupling.id, { [dof]: event.target.checked })} />{dof}</label>)}</div>
       <button className="danger small" onClick={() => removeCoupling(coupling.id)}>{t('prop.delete')}</button>
     </div>)}
     <div className="prop-actions"><button disabled={model.nodes.length < 2} onClick={() => { const master = model.nodes[0]; const slave = model.nodes[1]; if (master && slave) addCoupling({ masterNodeId: master.id, slaveNodeId: slave.id, ux: true, uy: true, uz: true, rx: false, ry: false, rz: false }); }}>{t('prop.addCoupling')}</button></div>

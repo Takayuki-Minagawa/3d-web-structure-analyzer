@@ -2,6 +2,7 @@ import type { ProjectModel } from '../../core/model/types';
 import { getAnalysisMode, getEffectiveRestraint } from '../../core/model/analysisMode';
 import { getTorsionRestraintSourceDofs } from '../../core/model/torsionRestraint';
 import { findCouplingIssues, resolveDofMap } from '../../core/model/couplings';
+import { dofValues } from '../../core/model/restraints';
 
 export type ReactionCell = {
   value: number | null;
@@ -35,8 +36,7 @@ export function buildEffectiveReactionRows(
 
   const constrainedSourceDofs = new Uint8Array(dofCount);
   for (let i = 0; i < model.nodes.length; i++) {
-    const r = getEffectiveRestraint(model.nodes[i]!.restraint, analysisMode);
-    const flags = [r.ux, r.uy, r.uz, r.rx, r.ry, r.rz];
+    const flags = dofValues(getEffectiveRestraint(model.nodes[i]!.restraint, analysisMode));
     for (let d = 0; d < 6; d++) {
       if (flags[d]) constrainedSourceDofs[i * 6 + d] = 1;
     }

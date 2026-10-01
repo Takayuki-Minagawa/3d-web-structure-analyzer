@@ -1,4 +1,5 @@
 import type { IndexedModel } from '../model/types';
+import { dofValues } from '../model/restraints';
 
 /**
  * Identify free (unconstrained) and fixed (constrained) DOF indices.
@@ -18,8 +19,7 @@ export function partitionDofs(model: IndexedModel): {
 
   for (const node of model.nodes) {
     const base = node.index * 6;
-    const r = node.restraint;
-    const flags = [r.ux, r.uy, r.uz, r.rx, r.ry, r.rz];
+    const flags = dofValues(node.restraint);
     for (let i = 0; i < 6; i++) {
       if (flags[i]) isFixed[base + i] = 1;
     }

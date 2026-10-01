@@ -115,6 +115,25 @@ export interface UniformMemberLoad {
   value: number; // per unit length
 }
 
+/**
+ * Linearly varying distributed load over the partial span [a, b].
+ * A uniform partial load uses equal intensities; a triangular load uses zero
+ * at one end.
+ */
+export interface TrapezoidalMemberLoad {
+  id: string;
+  loadCaseId?: LoadCaseId;
+  memberId: MemberId;
+  type: 'trapezoid';
+  direction: MemberLoadDirection;
+  /** Intensity per unit length at the start position `a`. */
+  value: number;
+  /** Intensity per unit length at the end position `b`. */
+  valueEnd: number;
+  a: number; // start distance from i-end
+  b: number; // end distance from i-end
+}
+
 export interface CMQMemberLoad {
   id: string;
   loadCaseId?: LoadCaseId;
@@ -163,9 +182,33 @@ export interface SelfWeightMemberLoad {
 export type MemberLoad =
   | PointMemberLoad
   | UniformMemberLoad
+  | TrapezoidalMemberLoad
   | CMQMemberLoad
   | TemperatureMemberLoad
   | SelfWeightMemberLoad;
+
+/**
+ * Prescribed (enforced) displacement of restrained nodal DOFs, e.g. a support
+ * settlement. Components on unrestrained DOFs are rejected by validation.
+ */
+export interface PrescribedDisplacement {
+  id: string;
+  loadCaseId?: LoadCaseId;
+  nodeId: NodeId;
+  ux: number;
+  uy: number;
+  uz: number;
+  rx: number;
+  ry: number;
+  rz: number;
+}
+
+/** Additional lumped translational mass used by eigenvalue (modal) analysis. */
+export interface NodalMass {
+  id: string;
+  nodeId: NodeId;
+  mass: number;
+}
 
 export interface LoadCase {
   id: LoadCaseId;
@@ -228,6 +271,10 @@ export interface ProjectModel {
   gravity?: { x: number; y: number; z: number };
   nodalLoads: NodalLoad[];
   memberLoads: MemberLoad[];
+  /** Optional for backward compatibility with existing project files. */
+  prescribedDisplacements?: PrescribedDisplacement[];
+  /** Optional for backward compatibility with existing project files. */
+  nodeMasses?: NodalMass[];
   units: {
     force: string;
     length: string;
@@ -294,6 +341,7 @@ export interface IndexedModel {
   members: IndexedMember[];
   nodalLoads: NodalLoad[];
   memberLoads: MemberLoad[];
+  prescribedDisplacements: PrescribedDisplacement[];
   nodeSprings: IndexedNodalSpringSupport[];
   gravity: { x: number; y: number; z: number };
   nodeCount: number;

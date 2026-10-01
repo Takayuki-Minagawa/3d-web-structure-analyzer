@@ -1,4 +1,13 @@
-import type { ProjectModel, AnalysisError } from './types';
+import type {
+  AnalysisError,
+  AnalysisMode,
+  Material,
+  Member,
+  MemberLoad,
+  ProjectModel,
+  Section,
+  StructuralNode,
+} from './types';
 import {
   findMembersWithUnsupported2dOrientation,
   findNodesOffAnalysisPlane,
@@ -6,6 +15,7 @@ import {
   get2dModeConfig,
   getEffectiveRestraint,
   getMemberOutOfPlaneLocalAxes,
+  type TwoDimensionalModeConfig,
 } from './analysisMode';
 import {
   findMembersWithUnsupportedTorsionRestraint,
@@ -13,8 +23,11 @@ import {
 } from './torsionRestraint';
 import { findCouplingIssues } from './couplings';
 import { memberLabel, nodeLabel } from './displayNumbers';
+import { DOF_NAMES, dofValues } from './restraints';
 
 const RELATIVE_LOAD_TOLERANCE = 1e-12;
+/** Relative slack for load positions compared against computed member lengths. */
+const POSITION_TOLERANCE = 1e-9;
 
 interface LoadScaleContext {
   representativeLength: number;
@@ -22,16 +35,42 @@ interface LoadScaleContext {
   memberLengths: Map<string, number>;
 }
 
-function createLoadScaleContext(model: ProjectModel): LoadScaleContext {
-  const nodeById = new Map(model.nodes.map((node) => [node.id, node]));
-  const memberById = new Map(model.members.map((member) => [member.id, member]));
-  const sectionById = new Map(model.sections.map((section) => [section.id, section]));
-  const materialById = new Map(model.materials.map((material) => [material.id, material]));
+/** Lookups shared by the individual validation passes. */
+interface ValidationContext {
+  model: ProjectModel;
+  errors: AnalysisError[];
+  analysisMode: AnalysisMode;
+  twoDimensionalConfig: TwoDimensionalModeConfig | null;
+  loadScale: LoadScaleContext;
+  nodeById: Map<string, StructuralNode>;
+  memberById: Map<string, Member>;
+  sectionById: Map<string, Section>;
+  materialById: Map<string, Material>;
+  nodeReferenceLabel: (id: string) => string;
+  memberReferenceLabel: (id: string) => string;
+}
+
+type ModelLookups = Pick<
+  ValidationContext,
+  'nodeById' | 'memberById' | 'sectionById' | 'materialById'
+>;
+
+function memberMaterial(
+  lookups: ModelLookups,
+  memberId: string
+): { section: Section | undefined; material: Material | undefined } {
+  const member = lookups.memberById.get(memberId);
+  const section = member ? lookups.sectionById.get(member.sectionId) : undefined;
+  const material = section ? lookups.materialById.get(section.materialId) : undefined;
+  return { section, material };
+}
+
+function createLoadScaleContext(model: ProjectModel, lookups: ModelLookups): LoadScaleContext {
   const memberLengths = new Map<string, number>();
   let representativeLength = 0;
   for (const member of model.members) {
-    const nodeI = nodeById.get(member.ni);
-    const nodeJ = nodeById.get(member.nj);
+    const nodeI = lookups.nodeById.get(member.ni);
+    const nodeJ = lookups.nodeById.get(member.nj);
     if (!nodeI || !nodeJ) continue;
     const length = Math.hypot(nodeJ.x - nodeI.x, nodeJ.y - nodeI.y, nodeJ.z - nodeI.z);
     if (!Number.isFinite(length)) continue;
@@ -53,10 +92,13 @@ function createLoadScaleContext(model: ProjectModel): LoadScaleContext {
     const memberLength = memberLengths.get(load.memberId) ?? lengthScale;
     if (load.type === 'point') forceScale = Math.max(forceScale, Math.abs(load.value));
     else if (load.type === 'udl') forceScale = Math.max(forceScale, Math.abs(load.value) * memberLength);
-    else if (load.type === 'temperature' || load.type === 'selfWeight') {
-      const member = memberById.get(load.memberId);
-      const section = member ? sectionById.get(member.sectionId) : undefined;
-      const material = section ? materialById.get(section.materialId) : undefined;
+    else if (load.type === 'trapezoid') {
+      forceScale = Math.max(
+        forceScale,
+        Math.max(Math.abs(load.value), Math.abs(load.valueEnd)) * memberLength
+      );
+    } else if (load.type === 'temperature' || load.type === 'selfWeight') {
+      const { section, material } = memberMaterial(lookups, load.memberId);
       if (load.type === 'temperature') {
         forceScale = Math.max(
           forceScale,
@@ -102,58 +144,73 @@ function findDuplicateIds(items: readonly { id: string }[]): string[] {
   return [...duplicates];
 }
 
-export function validateModel(model: ProjectModel): AnalysisError[] {
-  const errors: AnalysisError[] = [];
+function createValidationContext(model: ProjectModel): ValidationContext {
   const analysisMode = getAnalysisMode(model);
-  const twoDimensionalConfig = get2dModeConfig(analysisMode);
-  const loadScale = createLoadScaleContext(model);
   const nodeById = new Map(model.nodes.map((node) => [node.id, node]));
   const memberById = new Map(model.members.map((member) => [member.id, member]));
-  const nodeReferenceLabel = (id: string): string => {
-    const node = nodeById.get(id);
-    return node ? nodeLabel(node) : id;
+  const lookups: ModelLookups = {
+    nodeById,
+    memberById,
+    sectionById: new Map(model.sections.map((section) => [section.id, section])),
+    materialById: new Map(model.materials.map((material) => [material.id, material])),
   };
-  const memberReferenceLabel = (id: string): string => {
-    const member = memberById.get(id);
-    return member ? memberLabel(member) : id;
+  return {
+    model,
+    errors: [],
+    analysisMode,
+    twoDimensionalConfig: get2dModeConfig(analysisMode),
+    loadScale: createLoadScaleContext(model, lookups),
+    ...lookups,
+    nodeReferenceLabel: (id) => {
+      const node = nodeById.get(id);
+      return node ? nodeLabel(node) : id;
+    },
+    memberReferenceLabel: (id) => {
+      const member = memberById.get(id);
+      return member ? memberLabel(member) : id;
+    },
   };
+}
 
-  if (twoDimensionalConfig) {
-    const offPlaneNodes = findNodesOffAnalysisPlane(model, analysisMode);
-    if (offPlaneNodes.length > 0) {
-      errors.push({
-        type: 'validation',
-        message: `2D ${twoDimensionalConfig.planeLabel}平面モードでは全節点の${twoDimensionalConfig.lockedCoordinateLabel}座標が0である必要があります。対象節点: ${offPlaneNodes.map(nodeLabel).join(', ')}`,
-        nodeId: offPlaneNodes[0]!.id,
-      });
-    }
+function validateTwoDimensionalGeometry(context: ValidationContext): void {
+  const { model, errors, analysisMode, twoDimensionalConfig } = context;
+  if (!twoDimensionalConfig) return;
 
-    const unsupportedMembers = findMembersWithUnsupported2dOrientation(model, analysisMode);
-    if (unsupportedMembers.length > 0) {
-      errors.push({
-        type: 'validation',
-        message: `2D ${twoDimensionalConfig.planeLabel}平面モードでは部材コード角を0度または180度系にしてください。対象部材: ${unsupportedMembers.map(memberLabel).join(', ')}`,
-        elementId: unsupportedMembers[0]!.id,
-      });
-    }
+  const offPlaneNodes = findNodesOffAnalysisPlane(model, analysisMode);
+  if (offPlaneNodes.length > 0) {
+    errors.push({
+      type: 'validation',
+      message: `2D ${twoDimensionalConfig.planeLabel}平面モードでは全節点の${twoDimensionalConfig.lockedCoordinateLabel}座標が0である必要があります。対象節点: ${offPlaneNodes.map(nodeLabel).join(', ')}`,
+      nodeId: offPlaneNodes[0]!.id,
+    });
   }
 
-  // Check: at least one node
+  const unsupportedMembers = findMembersWithUnsupported2dOrientation(model, analysisMode);
+  if (unsupportedMembers.length > 0) {
+    errors.push({
+      type: 'validation',
+      message: `2D ${twoDimensionalConfig.planeLabel}平面モードでは部材コード角を0度または180度系にしてください。対象部材: ${unsupportedMembers.map(memberLabel).join(', ')}`,
+      elementId: unsupportedMembers[0]!.id,
+    });
+  }
+}
+
+function validateModelSize({ model, errors }: ValidationContext): void {
   if (model.nodes.length === 0) {
     errors.push({
       type: 'validation',
       message: '節点が1つもありません。少なくとも1つの節点を作成してください。',
     });
   }
-
-  // Check: at least one member
   if (model.members.length === 0) {
     errors.push({
       type: 'validation',
       message: '部材が1つもありません。少なくとも1つの部材を作成してください。',
     });
   }
+}
 
+function validateUniqueIds({ model, errors }: ValidationContext): void {
   const idGroups: Array<{
     label: string;
     items: readonly { id: string }[];
@@ -168,6 +225,8 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
     { label: '節点荷重', items: model.nodalLoads, location: 'element' },
     { label: '部材荷重', items: model.memberLoads, location: 'element' },
     { label: 'カップリング', items: model.couplings ?? [], location: 'element' },
+    { label: '強制変位', items: model.prescribedDisplacements ?? [], location: 'element' },
+    { label: '節点質量', items: model.nodeMasses ?? [], location: 'element' },
   ];
   for (const group of idGroups) {
     for (const duplicateId of findDuplicateIds(group.items)) {
@@ -180,7 +239,9 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
       errors.push(error);
     }
   }
+}
 
+function validateNodeCoordinates({ model, errors }: ValidationContext): void {
   for (const node of model.nodes) {
     const invalidCoordinates = (['x', 'y', 'z'] as const)
       .filter((coordinate) => !Number.isFinite(node[coordinate]));
@@ -192,8 +253,9 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
       });
     }
   }
+}
 
-  // Check: materials
+function validateMaterials({ model, errors }: ValidationContext): void {
   if (model.materials.length === 0) {
     errors.push({
       type: 'validation',
@@ -230,8 +292,9 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
       });
     }
   }
+}
 
-  // Check: sections
+function validateSections({ model, errors }: ValidationContext): void {
   if (model.sections.length === 0) {
     errors.push({
       type: 'validation',
@@ -277,7 +340,10 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
       }
     }
   }
+}
 
+/** Validates the rotational spring table and returns the declared numbers. */
+function validateSprings({ model, errors }: ValidationContext): Set<number> {
   const springNumbers = new Set<number>();
   for (const spring of model.springs ?? []) {
     if (!Number.isInteger(spring.number) || spring.number < 0) {
@@ -303,27 +369,33 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
       });
     }
   }
+  return springNumbers;
+}
 
-  const nodeIds = new Set(model.nodes.map((n) => n.id));
-  if (model.gravity) {
-    const invalidGravity = (['x', 'y', 'z'] as const)
-      .filter((component) => !Number.isFinite(model.gravity![component]));
-    if (invalidGravity.length > 0) {
-      errors.push({
-        type: 'validation',
-        message: `重力加速度の成分 (${invalidGravity.join(', ')}) が有限値ではありません。`,
-      });
-    }
+function validateGravity({ model, errors }: ValidationContext): void {
+  const gravity = model.gravity;
+  if (!gravity) return;
+  const invalidGravity = (['x', 'y', 'z'] as const)
+    .filter((component) => !Number.isFinite(gravity[component]));
+  if (invalidGravity.length > 0) {
+    errors.push({
+      type: 'validation',
+      message: `重力加速度の成分 (${invalidGravity.join(', ')}) が有限値ではありません。`,
+    });
   }
+}
+
+function validateNodeSprings(context: ValidationContext): void {
+  const { model, errors, nodeById, nodeReferenceLabel } = context;
   for (const spring of model.nodeSprings ?? []) {
-    if (!nodeIds.has(spring.nodeId)) {
+    if (!nodeById.has(spring.nodeId)) {
       errors.push({
         type: 'validation',
         message: `節点バネ ${spring.id} の対象節点 ${nodeReferenceLabel(spring.nodeId)} が見つかりません。`,
         nodeId: spring.nodeId,
       });
     }
-    const invalid = (['ux', 'uy', 'uz', 'rx', 'ry', 'rz'] as const)
+    const invalid = DOF_NAMES
       .filter((component) => !Number.isFinite(spring[component]) || spring[component] < 0);
     if (invalid.length > 0) {
       errors.push({
@@ -333,6 +405,9 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
       });
     }
   }
+}
+
+function validateCouplingsAndTorsionRestraints({ model, errors }: ValidationContext): void {
   for (const issue of findCouplingIssues(model)) {
     const error: AnalysisError = {
       type: 'validation',
@@ -341,16 +416,17 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
     if (issue.couplingId) error.elementId = issue.couplingId;
     errors.push(error);
   }
-  const unsupportedTorsionMembers = findMembersWithUnsupportedTorsionRestraint(model);
-  for (const member of unsupportedTorsionMembers) {
+  for (const member of findMembersWithUnsupportedTorsionRestraint(model)) {
     errors.push({
       type: 'validation',
       message: formatUnsupportedTorsionRestraintMessage(memberLabel(member)),
       elementId: member.id,
     });
   }
+}
 
-  // Check: members
+function validateMembers(context: ValidationContext, springNumbers: ReadonlySet<number>): void {
+  const { model, errors, nodeById, sectionById, nodeReferenceLabel } = context;
   for (const m of model.members) {
     const displayMember = memberLabel(m);
     if (!Number.isFinite(m.codeAngle)) {
@@ -360,14 +436,16 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
         elementId: m.id,
       });
     }
-    if (!nodeIds.has(m.ni)) {
+    const ni = nodeById.get(m.ni);
+    const nj = nodeById.get(m.nj);
+    if (!ni) {
       errors.push({
         type: 'validation',
         message: `部材 ${displayMember} の始端節点 ${nodeReferenceLabel(m.ni)} が存在しません。`,
         elementId: m.id,
       });
     }
-    if (!nodeIds.has(m.nj)) {
+    if (!nj) {
       errors.push({
         type: 'validation',
         message: `部材 ${displayMember} の終端節点 ${nodeReferenceLabel(m.nj)} が存在しません。`,
@@ -376,8 +454,6 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
     }
 
     // Zero-length member (3D distance)
-    const ni = nodeById.get(m.ni);
-    const nj = nodeById.get(m.nj);
     if (ni && nj) {
       const dx = nj.x - ni.x;
       const dy = nj.y - ni.y;
@@ -393,7 +469,7 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
     }
 
     // Section reference
-    if (!model.sections.some((sec) => sec.id === m.sectionId)) {
+    if (!sectionById.has(m.sectionId)) {
       errors.push({
         type: 'validation',
         message: `部材 ${displayMember} の断面 ${m.sectionId} が見つかりません。`,
@@ -425,8 +501,10 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
       }
     }
   }
+}
 
-  // Check: constraint sufficiency (3 translational directions)
+/** Constraint sufficiency: every translational direction needs a support. */
+function validateSupportSufficiency({ model, errors, analysisMode }: ValidationContext): void {
   const effectiveRestraints = model.nodes.map((n) =>
     getEffectiveRestraint(n.restraint, analysisMode)
   );
@@ -441,16 +519,16 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
         '拘束不足の可能性があります。少なくともX, Y, Z 各方向の並進拘束が必要です。',
     });
   }
+}
 
-  // Check: isolated nodes
+function validateIsolatedNodes({ model, errors }: ValidationContext): void {
   const connectedNodes = new Set<string>();
   for (const m of model.members) {
     connectedNodes.add(m.ni);
     connectedNodes.add(m.nj);
   }
-  for (const spring of supportSprings) {
-    if ([spring.ux, spring.uy, spring.uz, spring.rx, spring.ry, spring.rz]
-      .some((stiffness) => stiffness > 0)) {
+  for (const spring of model.nodeSprings ?? []) {
+    if (dofValues(spring).some((stiffness) => stiffness > 0)) {
       connectedNodes.add(spring.nodeId);
     }
   }
@@ -463,163 +541,197 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
       });
     }
   }
+}
 
-  // Check: member loads
-  const memberIds = new Set(model.members.map((m) => m.id));
-  const sectionById = new Map(model.sections.map((section) => [section.id, section]));
-  const materialById = new Map(model.materials.map((material) => [material.id, material]));
-  for (const ml of model.memberLoads) {
-    const displayMember = memberReferenceLabel(ml.memberId);
-    if (!memberIds.has(ml.memberId)) {
+function memberLength(context: ValidationContext, memberId: string): number | undefined {
+  const member = context.memberById.get(memberId);
+  const nodeI = member ? context.nodeById.get(member.ni) : undefined;
+  const nodeJ = member ? context.nodeById.get(member.nj) : undefined;
+  if (!nodeI || !nodeJ) return undefined;
+  const length = Math.hypot(nodeJ.x - nodeI.x, nodeJ.y - nodeI.y, nodeJ.z - nodeI.z);
+  return Number.isFinite(length) ? length : undefined;
+}
+
+function validateMemberLoad(context: ValidationContext, ml: MemberLoad): void {
+  const { model, errors, memberById, memberReferenceLabel } = context;
+  const displayMember = memberReferenceLabel(ml.memberId);
+  if (!memberById.has(ml.memberId)) {
+    errors.push({
+      type: 'validation',
+      message: `部材荷重 ${ml.id} の対象部材 ${displayMember} が見つかりません。`,
+      elementId: ml.memberId,
+    });
+  }
+  if (ml.type === 'point') {
+    if (!Number.isFinite(ml.a)) {
       errors.push({
         type: 'validation',
-        message: `部材荷重 ${ml.id} の対象部材 ${displayMember} が見つかりません。`,
+        message: `集中荷重 ${ml.id}（対象 ${displayMember}）の位置 a が有限値ではありません (a=${ml.a})。`,
         elementId: ml.memberId,
       });
-    }
-    if (ml.type === 'point') {
-      if (!Number.isFinite(ml.a)) {
+    } else {
+      const length = memberLength(context, ml.memberId);
+      if (length !== undefined && (ml.a < 0 || ml.a > length)) {
         errors.push({
           type: 'validation',
-          message: `集中荷重 ${ml.id}（対象 ${displayMember}）の位置 a が有限値ではありません (a=${ml.a})。`,
+          message: `集中荷重 ${ml.id} の位置 a=${ml.a} は部材 ${displayMember} の範囲 0〜${length} 外です。`,
           elementId: ml.memberId,
         });
-      } else {
-        const member = memberById.get(ml.memberId);
-        const nodeI = member ? nodeById.get(member.ni) : undefined;
-        const nodeJ = member ? nodeById.get(member.nj) : undefined;
-        if (nodeI && nodeJ) {
-          const length = Math.hypot(
-            nodeJ.x - nodeI.x,
-            nodeJ.y - nodeI.y,
-            nodeJ.z - nodeI.z
-          );
-          if (Number.isFinite(length) && (ml.a < 0 || ml.a > length)) {
-            errors.push({
-              type: 'validation',
-              message: `集中荷重 ${ml.id} の位置 a=${ml.a} は部材 ${displayMember} の範囲 0〜${length} 外です。`,
-              elementId: ml.memberId,
-            });
-          }
-        }
-      }
-    }
-    if (ml.type !== 'cmq' && !Number.isFinite(ml.value)) {
-      errors.push({
-        type: 'validation',
-        message: `部材荷重 ${ml.id}（対象 ${displayMember}）の荷重値が有限値ではありません (value=${ml.value})。`,
-        elementId: ml.memberId,
-      });
-    }
-    if (ml.type === 'selfWeight') {
-      const member = memberById.get(ml.memberId);
-      const section = member ? sectionById.get(member.sectionId) : undefined;
-      const material = section ? materialById.get(section.materialId) : undefined;
-      if (!material || !(material.density !== undefined && material.density > 0)) {
-        errors.push({
-          type: 'validation',
-          message: `自重荷重 ${ml.id}（対象 ${displayMember}）には正の材料密度が必要です。`,
-          elementId: ml.memberId,
-        });
-      }
-      const gravity = model.gravity;
-      if (!gravity || Math.hypot(gravity.x, gravity.y, gravity.z) === 0) {
-        errors.push({
-          type: 'validation',
-          message: `自重荷重 ${ml.id}（対象 ${displayMember}）には非ゼロの重力加速度ベクトルが必要です。`,
-          elementId: ml.memberId,
-        });
-      }
-    }
-    if (ml.type === 'cmq') {
-      const invalidComponents = ([
-        'iQx', 'iQy', 'iQz', 'iMy', 'iMz',
-        'jQx', 'jQy', 'jQz', 'jMy', 'jMz', 'moy', 'moz',
-      ] as const).filter((component) => !Number.isFinite(ml[component]));
-      if (invalidComponents.length > 0) {
-        errors.push({
-          type: 'validation',
-          message: `CMQ荷重 ${ml.id}（対象 ${displayMember}）の成分 (${invalidComponents.join(', ')}) が有限値ではありません。`,
-          elementId: ml.memberId,
-        });
-      }
-    }
-    if (twoDimensionalConfig) {
-      const member = memberById.get(ml.memberId);
-      const outOfPlaneAxes = member
-        ? getMemberOutOfPlaneLocalAxes(model, member, analysisMode)
-        : { localY: false, localZ: false };
-      const memberLength = loadScale.memberLengths.get(ml.memberId)
-        ?? loadScale.representativeLength;
-      const isDirectional = ml.type === 'point' || ml.type === 'udl';
-      const localOutOfPlane = isDirectional &&
-        ((ml.direction === 'localY' && outOfPlaneAxes.localY) ||
-         (ml.direction === 'localZ' && outOfPlaneAxes.localZ));
-      const globalOutOfPlane = isDirectional &&
-        ml.direction === `global${twoDimensionalConfig.planeNormal.toUpperCase()}`;
-      const directionalForce = isDirectional
-        ? Math.abs(ml.value) * (ml.type === 'udl' ? memberLength : 1)
-        : 0;
-      if ((localOutOfPlane || globalOutOfPlane) &&
-          isRelativelyNonzero(directionalForce, loadScale.forceScale)) {
-        errors.push({
-          type: 'validation',
-          message: `2D ${twoDimensionalConfig.planeLabel}平面モードでは部材荷重 ${ml.id}（対象 ${displayMember}）の面外方向荷重 (${ml.direction}) は使用できません。localX または面内のローカル方向を使用してください。`,
-          elementId: ml.memberId,
-        });
-      }
-      if (ml.type === 'selfWeight' && member) {
-        const section = sectionById.get(member.sectionId);
-        const material = section ? materialById.get(section.materialId) : undefined;
-        const gravityComponent = model.gravity?.[twoDimensionalConfig.planeNormal] ?? 0;
-        const outOfPlaneForce = (material?.density ?? 0) * (section?.A ?? 0)
-          * gravityComponent * ml.value * memberLength;
-        if (isRelativelyNonzero(outOfPlaneForce, loadScale.forceScale)) {
-          errors.push({
-            type: 'validation',
-            message: `2D ${twoDimensionalConfig.planeLabel}平面モードでは自重荷重 ${ml.id}（対象 ${displayMember}）に面外重力成分を使用できません。`,
-            elementId: ml.memberId,
-          });
-        }
-      }
-      if (ml.type === 'cmq') {
-        const invalid: Array<[string, number]> = [];
-        if (outOfPlaneAxes.localY) {
-          invalid.push(['iQy', ml.iQy], ['jQy', ml.jQy]);
-        } else {
-          invalid.push(
-            ['iMy', ml.iMy / loadScale.representativeLength],
-            ['jMy', ml.jMy / loadScale.representativeLength],
-            ['moy', ml.moy / loadScale.representativeLength]
-          );
-        }
-        if (outOfPlaneAxes.localZ) {
-          invalid.push(['iQz', ml.iQz], ['jQz', ml.jQz]);
-        } else {
-          invalid.push(
-            ['iMz', ml.iMz / loadScale.representativeLength],
-            ['jMz', ml.jMz / loadScale.representativeLength],
-            ['moz', ml.moz / loadScale.representativeLength]
-          );
-        }
-        const nonzeroInvalid = invalid.filter(([, value]) =>
-          isRelativelyNonzero(value, loadScale.forceScale)
-        );
-        if (nonzeroInvalid.length > 0) {
-          errors.push({
-            type: 'validation',
-            message: `2D ${twoDimensionalConfig.planeLabel}平面モードではCMQ荷重 ${ml.id}（対象 ${displayMember}）の面外成分 (${nonzeroInvalid.map(([name]) => name).join(', ')}) は使用できません。`,
-            elementId: ml.memberId,
-          });
-        }
       }
     }
   }
+  if (ml.type === 'trapezoid') {
+    if (!Number.isFinite(ml.a) || !Number.isFinite(ml.b)) {
+      errors.push({
+        type: 'validation',
+        message: `分布荷重 ${ml.id}（対象 ${displayMember}）の範囲 a, b が有限値ではありません (a=${ml.a}, b=${ml.b})。`,
+        elementId: ml.memberId,
+      });
+    } else {
+      const length = memberLength(context, ml.memberId);
+      const tolerance = POSITION_TOLERANCE * Math.max(length ?? 1, 1);
+      if (!(ml.b > ml.a) || ml.a < -tolerance || (length !== undefined && ml.b > length + tolerance)) {
+        errors.push({
+          type: 'validation',
+          message: `分布荷重 ${ml.id} の範囲 a=${ml.a}, b=${ml.b} は部材 ${displayMember} の範囲 0〜${length ?? '?'} 内で a < b である必要があります。`,
+          elementId: ml.memberId,
+        });
+      }
+    }
+    if (!Number.isFinite(ml.valueEnd)) {
+      errors.push({
+        type: 'validation',
+        message: `部材荷重 ${ml.id}（対象 ${displayMember}）の終端荷重値が有限値ではありません (valueEnd=${ml.valueEnd})。`,
+        elementId: ml.memberId,
+      });
+    }
+  }
+  if (ml.type !== 'cmq' && !Number.isFinite(ml.value)) {
+    errors.push({
+      type: 'validation',
+      message: `部材荷重 ${ml.id}（対象 ${displayMember}）の荷重値が有限値ではありません (value=${ml.value})。`,
+      elementId: ml.memberId,
+    });
+  }
+  if (ml.type === 'selfWeight') {
+    const { material } = memberMaterial(context, ml.memberId);
+    if (!material || !(material.density !== undefined && material.density > 0)) {
+      errors.push({
+        type: 'validation',
+        message: `自重荷重 ${ml.id}（対象 ${displayMember}）には正の材料密度が必要です。`,
+        elementId: ml.memberId,
+      });
+    }
+    const gravity = model.gravity;
+    if (!gravity || Math.hypot(gravity.x, gravity.y, gravity.z) === 0) {
+      errors.push({
+        type: 'validation',
+        message: `自重荷重 ${ml.id}（対象 ${displayMember}）には非ゼロの重力加速度ベクトルが必要です。`,
+        elementId: ml.memberId,
+      });
+    }
+  }
+  if (ml.type === 'cmq') {
+    const invalidComponents = ([
+      'iQx', 'iQy', 'iQz', 'iMy', 'iMz',
+      'jQx', 'jQy', 'jQz', 'jMy', 'jMz', 'moy', 'moz',
+    ] as const).filter((component) => !Number.isFinite(ml[component]));
+    if (invalidComponents.length > 0) {
+      errors.push({
+        type: 'validation',
+        message: `CMQ荷重 ${ml.id}（対象 ${displayMember}）の成分 (${invalidComponents.join(', ')}) が有限値ではありません。`,
+        elementId: ml.memberId,
+      });
+    }
+  }
+  validateMemberLoadIn2dMode(context, ml, displayMember);
+}
 
-  // Check: nodal loads
+/** Out-of-plane member-load components are not representable in 2D modes. */
+function validateMemberLoadIn2dMode(
+  context: ValidationContext,
+  ml: MemberLoad,
+  displayMember: string
+): void {
+  const { model, errors, analysisMode, twoDimensionalConfig, loadScale, memberById } = context;
+  if (!twoDimensionalConfig) return;
+
+  const member = memberById.get(ml.memberId);
+  const outOfPlaneAxes = member
+    ? getMemberOutOfPlaneLocalAxes(model, member, analysisMode)
+    : { localY: false, localZ: false };
+  const length = loadScale.memberLengths.get(ml.memberId)
+    ?? loadScale.representativeLength;
+  if (ml.type === 'point' || ml.type === 'udl' || ml.type === 'trapezoid') {
+    const localOutOfPlane =
+      (ml.direction === 'localY' && outOfPlaneAxes.localY) ||
+      (ml.direction === 'localZ' && outOfPlaneAxes.localZ);
+    const globalOutOfPlane =
+      ml.direction === `global${twoDimensionalConfig.planeNormal.toUpperCase()}`;
+    const intensity = ml.type === 'trapezoid'
+      ? Math.max(Math.abs(ml.value), Math.abs(ml.valueEnd))
+      : Math.abs(ml.value);
+    const directionalForce = intensity * (ml.type === 'point' ? 1 : length);
+    if ((localOutOfPlane || globalOutOfPlane) &&
+        isRelativelyNonzero(directionalForce, loadScale.forceScale)) {
+      errors.push({
+        type: 'validation',
+        message: `2D ${twoDimensionalConfig.planeLabel}平面モードでは部材荷重 ${ml.id}（対象 ${displayMember}）の面外方向荷重 (${ml.direction}) は使用できません。localX または面内のローカル方向を使用してください。`,
+        elementId: ml.memberId,
+      });
+    }
+  }
+  if (ml.type === 'selfWeight' && member) {
+    const { section, material } = memberMaterial(context, ml.memberId);
+    const gravityComponent = model.gravity?.[twoDimensionalConfig.planeNormal] ?? 0;
+    const outOfPlaneForce = (material?.density ?? 0) * (section?.A ?? 0)
+      * gravityComponent * ml.value * length;
+    if (isRelativelyNonzero(outOfPlaneForce, loadScale.forceScale)) {
+      errors.push({
+        type: 'validation',
+        message: `2D ${twoDimensionalConfig.planeLabel}平面モードでは自重荷重 ${ml.id}（対象 ${displayMember}）に面外重力成分を使用できません。`,
+        elementId: ml.memberId,
+      });
+    }
+  }
+  if (ml.type === 'cmq') {
+    const invalid: Array<[string, number]> = [];
+    if (outOfPlaneAxes.localY) {
+      invalid.push(['iQy', ml.iQy], ['jQy', ml.jQy]);
+    } else {
+      invalid.push(
+        ['iMy', ml.iMy / loadScale.representativeLength],
+        ['jMy', ml.jMy / loadScale.representativeLength],
+        ['moy', ml.moy / loadScale.representativeLength]
+      );
+    }
+    if (outOfPlaneAxes.localZ) {
+      invalid.push(['iQz', ml.iQz], ['jQz', ml.jQz]);
+    } else {
+      invalid.push(
+        ['iMz', ml.iMz / loadScale.representativeLength],
+        ['jMz', ml.jMz / loadScale.representativeLength],
+        ['moz', ml.moz / loadScale.representativeLength]
+      );
+    }
+    const nonzeroInvalid = invalid.filter(([, value]) =>
+      isRelativelyNonzero(value, loadScale.forceScale)
+    );
+    if (nonzeroInvalid.length > 0) {
+      errors.push({
+        type: 'validation',
+        message: `2D ${twoDimensionalConfig.planeLabel}平面モードではCMQ荷重 ${ml.id}（対象 ${displayMember}）の面外成分 (${nonzeroInvalid.map(([name]) => name).join(', ')}) は使用できません。`,
+        elementId: ml.memberId,
+      });
+    }
+  }
+}
+
+function validateNodalLoads(context: ValidationContext): void {
+  const { model, errors, nodeById, twoDimensionalConfig, loadScale, nodeReferenceLabel } = context;
   for (const nl of model.nodalLoads) {
     const displayNode = nodeReferenceLabel(nl.nodeId);
-    if (!nodeIds.has(nl.nodeId)) {
+    if (!nodeById.has(nl.nodeId)) {
       errors.push({
         type: 'validation',
         message: `節点荷重 ${nl.id} の対象節点 ${displayNode} が見つかりません。`,
@@ -653,6 +765,95 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
       }
     }
   }
+}
 
-  return errors;
+/**
+ * A prescribed displacement replaces the zero value of a support, so each
+ * nonzero component must sit on a DOF the node itself restrains.
+ */
+function validatePrescribedDisplacements(context: ValidationContext): void {
+  const { model, errors, nodeById, twoDimensionalConfig, nodeReferenceLabel } = context;
+  for (const item of model.prescribedDisplacements ?? []) {
+    const node = nodeById.get(item.nodeId);
+    const displayNode = nodeReferenceLabel(item.nodeId);
+    if (!node) {
+      errors.push({
+        type: 'validation',
+        message: `強制変位 ${item.id} の対象節点 ${displayNode} が見つかりません。`,
+        nodeId: item.nodeId,
+      });
+      continue;
+    }
+    const invalidComponents = DOF_NAMES.filter((dof) => !Number.isFinite(item[dof]));
+    if (invalidComponents.length > 0) {
+      errors.push({
+        type: 'validation',
+        message: `強制変位 ${item.id}（対象 ${displayNode}）の成分 (${invalidComponents.join(', ')}) が有限値ではありません。`,
+        nodeId: item.nodeId,
+      });
+      continue;
+    }
+    const unrestrained = DOF_NAMES.filter((dof) => item[dof] !== 0 && !node.restraint[dof]);
+    if (unrestrained.length > 0) {
+      errors.push({
+        type: 'validation',
+        message: `強制変位 ${item.id}（対象 ${displayNode}）の成分 (${unrestrained.join(', ')}) は拘束されていない自由度です。強制変位は支持条件で固定した自由度にのみ指定できます。`,
+        nodeId: item.nodeId,
+      });
+    }
+    if (twoDimensionalConfig) {
+      const outOfPlane = twoDimensionalConfig.autoFixedDofs.filter((dof) => item[dof] !== 0);
+      if (outOfPlane.length > 0) {
+        errors.push({
+          type: 'validation',
+          message: `2D ${twoDimensionalConfig.planeLabel}平面モードでは強制変位 ${item.id}（対象 ${displayNode}）の面外成分 (${outOfPlane.join(', ')}) は使用できません。`,
+          nodeId: item.nodeId,
+        });
+      }
+    }
+  }
+}
+
+function validateNodalMasses(context: ValidationContext): void {
+  const { model, errors, nodeById, nodeReferenceLabel } = context;
+  for (const item of model.nodeMasses ?? []) {
+    if (!nodeById.has(item.nodeId)) {
+      errors.push({
+        type: 'validation',
+        message: `節点質量 ${item.id} の対象節点 ${nodeReferenceLabel(item.nodeId)} が見つかりません。`,
+        nodeId: item.nodeId,
+      });
+    }
+    if (!Number.isFinite(item.mass) || item.mass < 0) {
+      errors.push({
+        type: 'validation',
+        message: `節点質量 ${item.id} が有限な非負値ではありません (mass=${item.mass})。`,
+        nodeId: item.nodeId,
+      });
+    }
+  }
+}
+
+export function validateModel(model: ProjectModel): AnalysisError[] {
+  const context = createValidationContext(model);
+
+  validateTwoDimensionalGeometry(context);
+  validateModelSize(context);
+  validateUniqueIds(context);
+  validateNodeCoordinates(context);
+  validateMaterials(context);
+  validateSections(context);
+  const springNumbers = validateSprings(context);
+  validateGravity(context);
+  validateNodeSprings(context);
+  validateCouplingsAndTorsionRestraints(context);
+  validateMembers(context, springNumbers);
+  validateSupportSufficiency(context);
+  validateIsolatedNodes(context);
+  for (const load of model.memberLoads) validateMemberLoad(context, load);
+  validateNodalLoads(context);
+  validatePrescribedDisplacements(context);
+  validateNodalMasses(context);
+
+  return context.errors;
 }
