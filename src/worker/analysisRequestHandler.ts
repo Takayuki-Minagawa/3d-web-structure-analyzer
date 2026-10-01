@@ -1,33 +1,28 @@
 import type {
   AnalysisError,
   ComponentEnvelope,
-  DiagramPoint,
-  MultiTargetAnalysisOutput,
+  DiagramSeries,
+  ModeShape,
 } from '../core/model/types';
-import { buildIndexedModel } from '../core/model/indexing';
-import { validateModel } from '../core/model/validation';
-import { analyzeFrame } from '../core/analysis/analyzeFrame';
 import { analyzeAllLoadTargets } from '../core/analysis/analyzeLoadTargets';
-import { resolveAnalysisLoadModel } from '../core/model/loadCases';
+import { analyzeBuckling, analyzeModal } from '../core/analysis/eigenAnalysis';
 import type {
   AnalysisExecutionRequest,
   AnalyzeAllSuccess,
-  AnalyzeAllSuccessV2,
-  AnyWorkerResponse,
+  BucklingSuccess,
+  ModalSuccess,
+  SerializedDiagrams,
+  SerializedModeShape,
   WorkerResponse,
-  WorkerResponseV2,
 } from './protocol';
-import { isAnalyzeRequestV2 } from './protocol';
 
 export interface AnalysisResponseEnvelope {
-  response: AnyWorkerResponse;
+  response: WorkerResponse;
   transferables: Transferable[];
 }
 
-function serializeDiagrams(
-  diagrams: Map<string, { memberId: string; points: DiagramPoint[] }>
-): Record<string, { memberId: string; points: DiagramPoint[] }> {
-  const serialized: Record<string, { memberId: string; points: DiagramPoint[] }> = {};
+function serializeDiagrams(diagrams: Map<string, DiagramSeries>): SerializedDiagrams {
+  const serialized: SerializedDiagrams = {};
   diagrams.forEach((value, key) => {
     serialized[key] = { memberId: value.memberId, points: value.points };
   });
@@ -51,172 +46,92 @@ function mapAnalysisError(errorValue: unknown): AnalysisError {
   return error;
 }
 
-function errorEnvelope(
-  request: AnalysisExecutionRequest,
-  error: AnalysisError
-): AnalysisResponseEnvelope {
-  const response: WorkerResponse | WorkerResponseV2 = isAnalyzeRequestV2(request)
-    ? { type: 'analyze-error', requestId: request.requestId, error }
-    : { type: 'analyze-error', error };
-  return { response, transferables: [] };
-}
+/** Collects the buffers of every typed array placed into a response. */
+class TransferList {
+  readonly buffers: Transferable[] = [];
 
-function serializeEndForcesAsArrays(
-  values: Map<string, Float64Array>
-): Record<string, number[]> {
-  const serialized: Record<string, number[]> = {};
-  values.forEach((value, key) => {
-    serialized[key] = Array.from(value);
-  });
-  return serialized;
-}
+  add(array: Float64Array): Float64Array {
+    this.buffers.push(array.buffer as ArrayBuffer);
+    return array;
+  }
 
-function serializeLegacyEnvelope(component: ComponentEnvelope): {
-  min: number[];
-  max: number[];
-  minTargetIds: string[];
-  maxTargetIds: string[];
-} {
-  return {
-    min: Array.from(component.min),
-    max: Array.from(component.max),
-    minTargetIds: component.minTargetIds,
-    maxTargetIds: component.maxTargetIds,
-  };
-}
+  envelope(component: ComponentEnvelope): ComponentEnvelope {
+    this.add(component.min);
+    this.add(component.max);
+    return component;
+  }
 
-function serializeAnalyzeAllLegacy(result: MultiTargetAnalysisOutput): AnalyzeAllSuccess {
-  const elementEndForces: AnalyzeAllSuccess['envelope']['elementEndForces'] = {};
-  result.envelope.elementEndForces.forEach((component, memberId) => {
-    elementEndForces[memberId] = serializeLegacyEnvelope(component);
-  });
-  return {
-    type: 'analyze-all-success',
-    results: result.results.map((targetResult) => ({
-      target: targetResult.target,
-      displacements: Array.from(targetResult.displacements),
-      reactions: Array.from(targetResult.reactions),
-      elementEndForces: serializeEndForcesAsArrays(targetResult.elementEndForces),
-      diagrams: serializeDiagrams(targetResult.diagrams),
-      warnings: targetResult.warnings,
-    })),
-    envelope: {
-      displacements: serializeLegacyEnvelope(result.envelope.displacements),
-      reactions: serializeLegacyEnvelope(result.envelope.reactions),
-      elementEndForces,
-    },
-    factorizationCount: result.factorizationCount,
-  };
-}
-
-function appendComponentTransferables(
-  component: ComponentEnvelope,
-  transferables: Transferable[]
-): ComponentEnvelope {
-  transferables.push(component.min.buffer as ArrayBuffer, component.max.buffer as ArrayBuffer);
-  return component;
-}
-
-function serializeAnalyzeAllV2(
-  requestId: string,
-  result: MultiTargetAnalysisOutput
-): AnalysisResponseEnvelope {
-  const transferables: Transferable[] = [];
-  const elementEnvelope: AnalyzeAllSuccessV2['envelope']['elementEndForces'] = {};
-  result.envelope.elementEndForces.forEach((component, memberId) => {
-    elementEnvelope[memberId] = appendComponentTransferables(component, transferables);
-  });
-  const results: AnalyzeAllSuccessV2['results'] = result.results.map((targetResult) => {
-    transferables.push(
-      targetResult.displacements.buffer as ArrayBuffer,
-      targetResult.reactions.buffer as ArrayBuffer
-    );
-    const elementEndForces: Record<string, Float64Array> = {};
-    targetResult.elementEndForces.forEach((value, memberId) => {
-      elementEndForces[memberId] = value;
-      transferables.push(value.buffer as ArrayBuffer);
-    });
+  modeShape(shape: ModeShape): SerializedModeShape<Float64Array> {
     return {
-      target: targetResult.target,
-      displacements: targetResult.displacements,
-      reactions: targetResult.reactions,
-      elementEndForces,
-      diagrams: serializeDiagrams(targetResult.diagrams),
-      warnings: targetResult.warnings,
+      displacements: this.add(shape.displacements),
+      diagrams: serializeDiagrams(shape.diagrams),
     };
+  }
+}
+
+function analyzeStatic(request: AnalysisExecutionRequest, transfer: TransferList): AnalyzeAllSuccess {
+  const result = analyzeAllLoadTargets(request.model);
+  const elementEnvelope: AnalyzeAllSuccess['envelope']['elementEndForces'] = {};
+  result.envelope.elementEndForces.forEach((component, memberId) => {
+    elementEnvelope[memberId] = transfer.envelope(component);
   });
-  const response: AnalyzeAllSuccessV2 = {
+  return {
     type: 'analyze-all-success',
-    requestId,
-    results,
+    requestId: request.requestId,
+    results: result.results.map((targetResult) => {
+      const elementEndForces: Record<string, Float64Array> = {};
+      targetResult.elementEndForces.forEach((value, memberId) => {
+        elementEndForces[memberId] = transfer.add(value);
+      });
+      return {
+        target: targetResult.target,
+        displacements: transfer.add(targetResult.displacements),
+        reactions: transfer.add(targetResult.reactions),
+        elementEndForces,
+        diagrams: serializeDiagrams(targetResult.diagrams),
+        warnings: targetResult.warnings,
+      };
+    }),
     envelope: {
-      displacements: appendComponentTransferables(result.envelope.displacements, transferables),
-      reactions: appendComponentTransferables(result.envelope.reactions, transferables),
+      displacements: transfer.envelope(result.envelope.displacements),
+      reactions: transfer.envelope(result.envelope.reactions),
       elementEndForces: elementEnvelope,
     },
     factorizationCount: result.factorizationCount,
   };
-  return { response, transferables };
 }
 
 /** Execute and serialize one analysis request without depending on worker globals. */
 export function createAnalysisResponse(
   request: AnalysisExecutionRequest
 ): AnalysisResponseEnvelope {
+  const transfer = new TransferList();
   try {
-    if (request.type === 'analyze-all') {
-      const result = analyzeAllLoadTargets(request.model);
-      if (!isAnalyzeRequestV2(request)) {
-        return { response: serializeAnalyzeAllLegacy(result), transferables: [] };
-      }
-      return serializeAnalyzeAllV2(request.requestId, result);
+    let response: WorkerResponse;
+    if (request.type === 'analyze-modal') {
+      const { modes, ...summary } = analyzeModal(request.model, request.options);
+      response = {
+        type: 'modal-success',
+        requestId: request.requestId,
+        ...summary,
+        modes: modes.map((mode) => ({ ...mode, shape: transfer.modeShape(mode.shape) })),
+      } satisfies ModalSuccess;
+    } else if (request.type === 'analyze-buckling') {
+      const { modes, ...summary } = analyzeBuckling(request.model, request.options);
+      response = {
+        type: 'buckling-success',
+        requestId: request.requestId,
+        ...summary,
+        modes: modes.map((mode) => ({ ...mode, shape: transfer.modeShape(mode.shape) })),
+      } satisfies BucklingSuccess;
+    } else {
+      response = analyzeStatic(request, transfer);
     }
-
-    const analysisModel = resolveAnalysisLoadModel(request.model);
-    const errors = validateModel(analysisModel);
-    const firstError = errors[0];
-    if (firstError) return errorEnvelope(request, firstError);
-
-    const indexed = buildIndexedModel(analysisModel);
-    const result = analyzeFrame({ model: indexed });
-    const diagrams = serializeDiagrams(result.diagrams);
-
-    if (!isAnalyzeRequestV2(request)) {
-      const elementEndForces: Record<string, number[]> = {};
-      result.elementEndForces.forEach((value, key) => {
-        elementEndForces[key] = Array.from(value);
-      });
-      const response: WorkerResponse = {
-        type: 'analyze-success',
-        displacements: Array.from(result.displacements),
-        reactions: Array.from(result.reactions),
-        elementEndForces,
-        diagrams,
-        warnings: result.warnings,
-      };
-      return { response, transferables: [] };
-    }
-
-    const elementEndForces: Record<string, Float64Array> = {};
-    const transferables: Transferable[] = [
-      result.displacements.buffer as ArrayBuffer,
-      result.reactions.buffer as ArrayBuffer,
-    ];
-    result.elementEndForces.forEach((value, key) => {
-      elementEndForces[key] = value;
-      transferables.push(value.buffer as ArrayBuffer);
-    });
-    const response: WorkerResponseV2 = {
-      type: 'analyze-success',
-      requestId: request.requestId,
-      displacements: result.displacements,
-      reactions: result.reactions,
-      elementEndForces,
-      diagrams,
-      warnings: result.warnings,
-    };
-    return { response, transferables };
+    return { response, transferables: transfer.buffers };
   } catch (error) {
-    return errorEnvelope(request, mapAnalysisError(error));
+    return {
+      response: { type: 'analyze-error', requestId: request.requestId, error: mapAnalysisError(error) },
+      transferables: [],
+    };
   }
 }

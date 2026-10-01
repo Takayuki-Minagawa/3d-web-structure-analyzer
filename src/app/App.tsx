@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import React, { useRef, useCallback, useEffect, useState } from 'react';
 import { Toolbar } from '../ui/toolbar/Toolbar';
 import { PropertyPanel } from '../ui/panels/PropertyPanel';
 import { CanvasPanel } from '../ui/panels/CanvasPanel';
@@ -11,35 +11,22 @@ import { useProjectStore } from '../state/projectStore';
 import { useViewStore } from '../state/viewStore';
 import { useSelectionStore } from '../state/selectionStore';
 import { useT, useI18nStore } from '../i18n';
-import type {
-  AnalyzeAllSuccess,
-  AnyWorkerResponse,
-  WorkerResponse,
-} from '../worker/protocol';
 import type { ProjectFile } from '../core/model/types';
 import { saveProject, loadProjectWithReport } from '../persistence/indexedDb';
 import { redoProject, undoProject } from '../state/projectStore';
 import { generatePortalFrameTemplate } from '../core/model/generators';
+import { CURRENT_PROJECT_SCHEMA_VERSION } from '../io/projectFileParser';
 import {
   generateCsvReport,
   generateMarkdownReport,
   generatePrintableReportHtml,
 } from '../io/reportExporter';
 import type { ReportInput, ReportResultView } from '../io/reportExporter';
-import {
-  beginAnalysisRequest,
-  clearActiveAnalysisRequest,
-  completeAnalysisRequest,
-  createAnalysisRequestGuard,
-  getActiveAnalysisRequestId,
-  invalidateAnalysisForModelChange,
-} from './analysisRequestGuard';
+import { downloadText, pickTextFile, printHtmlInNewWindow } from './browserFiles';
+import { useAnalysisWorker } from './useAnalysisWorker';
 
 export const App: React.FC = () => {
-  const workerRef = useRef<Worker | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const requestSequenceRef = useRef(0);
-  const analysisRequestGuardRef = useRef(createAnalysisRequestGuard());
   const [helpOpen, setHelpOpen] = useState(false);
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [initialGenerator, setInitialGenerator] = useState(false);
@@ -53,14 +40,6 @@ export const App: React.FC = () => {
   const toggleTheme = useViewStore((s) => s.toggleTheme);
 
   const model = useProjectStore((s) => s.model);
-  const analysisResult = useProjectStore((s) => s.analysisResult);
-  const analysisResults = useProjectStore((s) => s.analysisResults);
-  const analysisEnvelope = useProjectStore((s) => s.analysisEnvelope);
-  const analysisResultView = useProjectStore((s) => s.analysisResultView);
-  const analysisError = useProjectStore((s) => s.analysisError);
-  const isResultStale = useProjectStore((s) => s.isResultStale);
-  const setAnalyzing = useProjectStore((s) => s.setAnalyzing);
-  const setAnalysisResult = useProjectStore((s) => s.setAnalysisResult);
   const isAnalyzing = useProjectStore((s) => s.isAnalyzing);
   const loadModel = useProjectStore((s) => s.loadModel);
   const importJsonAuto = useProjectStore((s) => s.importJsonAuto);
@@ -70,6 +49,7 @@ export const App: React.FC = () => {
   const setImportReport = useProjectStore((s) => s.setImportReport);
   const resetModel = useProjectStore((s) => s.resetModel);
   const clearSelection = useSelectionStore((s) => s.clearSelection);
+  const analysis = useAnalysisWorker();
 
   // Apply theme to document
   useEffect(() => {
@@ -86,18 +66,6 @@ export const App: React.FC = () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
   }, [model]);
-
-  // Invalidate synchronously with every model replacement/edit. This prevents
-  // a late worker response from being attached to a newer model, including
-  // reset/import and edit-then-undo sequences.
-  useLayoutEffect(() => useProjectStore.subscribe((state, previousState) => {
-    if (state.model === previousState.model) return;
-    const requestId = invalidateAnalysisForModelChange(analysisRequestGuardRef.current);
-    if (!requestId) return;
-    workerRef.current?.terminate();
-    workerRef.current = null;
-    setAnalyzing(false);
-  }), [setAnalyzing]);
 
   // Load saved project on startup
   useEffect(() => {
@@ -116,12 +84,6 @@ export const App: React.FC = () => {
     });
   }, [loadModel, setImportReport]);
 
-  useEffect(() => () => {
-    workerRef.current?.terminate();
-    workerRef.current = null;
-    clearActiveAnalysisRequest(analysisRequestGuardRef.current);
-  }, []);
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
@@ -136,177 +98,92 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const runAnalysis = useCallback(() => {
-    if (useProjectStore.getState().isAnalyzing) return;
-
-    if (!workerRef.current) {
-      const worker = new Worker(
-        new URL('../worker/analysis.worker.ts', import.meta.url),
-        { type: 'module' }
-      );
-      workerRef.current = worker;
-      worker.onmessage = (e: MessageEvent<AnyWorkerResponse>) => {
-        const response = e.data;
-        // App requests always use the correlated v2 protocol. Never accept an
-        // uncorrelated legacy response or a response from a replaced worker.
-        if (!('requestId' in response) || workerRef.current !== worker) return;
-        if (!completeAnalysisRequest(analysisRequestGuardRef.current, response.requestId)) return;
-        if (response.type === 'analyze-canceled') {
-          setAnalyzing(false);
-          return;
-        }
-        if (response.type === 'analyze-success') {
-          const elementEndForces = Object.fromEntries(Object.entries(response.elementEndForces).map(([id, values]) => [id, Array.from(values)]));
-          setAnalysisResult({ ...response, displacements: Array.from(response.displacements), reactions: Array.from(response.reactions), elementEndForces } satisfies WorkerResponse);
-          return;
-        }
-        if (response.type === 'analyze-all-success') {
-          setAnalysisResult(normalizeAnalyzeAllResponse(response));
-          return;
-        }
-        setAnalysisResult({ type: 'analyze-error', error: response.error });
-      };
-      worker.onerror = () => {
-        if (workerRef.current !== worker) return;
-        const requestId = getActiveAnalysisRequestId(analysisRequestGuardRef.current);
-        if (!requestId || !completeAnalysisRequest(analysisRequestGuardRef.current, requestId)) return;
-        worker.terminate();
-        workerRef.current = null;
-        setAnalysisResult({
-          type: 'analyze-error',
-          error: { type: 'numerical', message: t('app.workerCrash') },
-        });
-      };
-    }
-
-    setAnalyzing(true);
-    const requestId = `analysis-${Date.now()}-${++requestSequenceRef.current}`;
-    beginAnalysisRequest(analysisRequestGuardRef.current, requestId);
-    workerRef.current.postMessage({
-      type: 'analyze-all',
-      requestId,
-      model: useProjectStore.getState().model,
-    });
-  }, [setAnalyzing, setAnalysisResult, t]);
-
-  const cancelAnalysis = useCallback(() => {
-    const requestId = clearActiveAnalysisRequest(analysisRequestGuardRef.current);
-    if (requestId) workerRef.current?.postMessage({ type: 'cancel', requestId });
-    workerRef.current?.terminate();
-    workerRef.current = null;
-    setAnalyzing(false);
-  }, [setAnalyzing]);
-
   const handleExport = useCallback(() => {
     const file: ProjectFile = {
-      schemaVersion: 2,
+      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
       savedAt: new Date().toISOString(),
       model,
     };
-    const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'frame-model-3d.json';
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadText('frame-model-3d.json', JSON.stringify(file, null, 2), 'application/json');
   }, [model]);
 
-  const reportInput = useCallback((): ReportInput => {
+  /** Snapshot of the model and its current results; null (with a notice) when stale. */
+  const createReportInput = useCallback((): ReportInput | null => {
+    const state = useProjectStore.getState();
+    if (state.isResultStale) {
+      alert(t('prop.staleWarning'));
+      return null;
+    }
     let resultView: ReportResultView | undefined;
-    if (analysisResultView?.kind === 'target') {
-      const selected = analysisResults.find((item) => item.target.id === analysisResultView.targetId);
+    const view = state.analysisResultView;
+    if (view?.kind === 'target') {
+      const selected = state.analysisResults.find((item) => item.target.id === view.targetId);
       if (selected) resultView = { kind: 'target', target: selected.target };
-    } else if (analysisResultView?.kind === 'envelope' && analysisEnvelope) {
+    } else if (view?.kind === 'envelope' && state.analysisEnvelope) {
       resultView = {
         kind: 'envelope',
-        bound: analysisResultView.bound,
-        envelope: analysisEnvelope,
+        bound: view.bound,
+        envelope: state.analysisEnvelope,
         targetNames: Object.fromEntries(
-          analysisResults.map((item) => [item.target.id, item.target.name]),
+          state.analysisResults.map((item) => [item.target.id, item.target.name]),
         ),
       };
     }
     return {
-      model,
-      result: analysisResult,
+      model: state.model,
+      result: state.analysisResult,
       ...(resultView ? { resultView } : {}),
-      error: analysisError,
+      ...(state.modalResult?.sourceModel === state.model ? { modal: state.modalResult } : {}),
+      ...(state.bucklingResult?.sourceModel === state.model ? { buckling: state.bucklingResult } : {}),
+      error: state.analysisError,
       generatedAt: new Date(),
-      isResultStale,
+      isResultStale: state.isResultStale,
     };
-  }, [model, analysisResult, analysisResults, analysisEnvelope, analysisResultView, analysisError, isResultStale]);
+  }, [t]);
 
   const handleExportMarkdownReport = useCallback(() => {
-    if (isResultStale) { alert(t('prop.staleWarning')); return; }
-    downloadText('frame-analysis-report.md', generateMarkdownReport(reportInput()), 'text/markdown');
-  }, [isResultStale, reportInput, t]);
+    const input = createReportInput();
+    if (input) downloadText('frame-analysis-report.md', generateMarkdownReport(input), 'text/markdown');
+  }, [createReportInput]);
 
   const handleExportCsvReport = useCallback(() => {
-    if (isResultStale) { alert(t('prop.staleWarning')); return; }
-    downloadText('frame-analysis-report.csv', generateCsvReport(reportInput()), 'text/csv');
-  }, [isResultStale, reportInput, t]);
+    const input = createReportInput();
+    if (input) downloadText('frame-analysis-report.csv', generateCsvReport(input), 'text/csv');
+  }, [createReportInput]);
 
   const handlePrintReport = useCallback(async () => {
-    if (isResultStale) { alert(t('prop.staleWarning')); return; }
+    const input = createReportInput();
+    if (!input) return;
     const viewportImageDataUrl = await captureViewerImage();
     const html = generatePrintableReportHtml({
-      ...reportInput(),
+      ...input,
       ...(viewportImageDataUrl ? { viewportImageDataUrl } : {}),
     });
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const win = window.open(url, '_blank');
-    if (!win) {
-      URL.revokeObjectURL(url);
-      alert(t('app.popupBlocked'));
-      return;
-    }
-    let revoked = false;
-    const revokeUrl = () => {
-      if (revoked) return;
-      URL.revokeObjectURL(url);
-      revoked = true;
-    };
-    win.addEventListener('load', () => {
-      win.print();
-      revokeUrl();
-    }, { once: true });
-    win.addEventListener('beforeunload', revokeUrl, { once: true });
-  }, [isResultStale, reportInput, t]);
+    if (!printHtmlInNewWindow(html)) alert(t('app.popupBlocked'));
+  }, [createReportInput, t]);
+
+  const importText = useCallback((text: string) => {
+    clearSelection();
+    setPendingImportText(text);
+    importJsonAuto(text);
+  }, [clearSelection, importJsonAuto]);
 
   const handleImport = useCallback(() => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          clearSelection();
-          const text = reader.result as string;
-          setPendingImportText(text);
-          importJsonAuto(text);
-        } catch {
-          alert(t('app.importError'));
-        }
-      };
-      reader.readAsText(file);
-    };
-    input.click();
-  }, [importJsonAuto, t, clearSelection]);
+    pickTextFile('.json', (text) => {
+      try {
+        importText(text);
+      } catch {
+        alert(t('app.importError'));
+      }
+    });
+  }, [importText, t]);
 
   const handleLoadSample = useCallback(async () => {
     try {
       // Try to load the FrameJson sample
       const resp = await fetch('./samples/FrameModel_Sample.json');
       if (resp.ok) {
-        const text = await resp.text();
-        clearSelection();
-        setPendingImportText(text);
-        importJsonAuto(text);
+        importText(await resp.text());
         return;
       }
     } catch {
@@ -314,7 +191,7 @@ export const App: React.FC = () => {
     }
     clearSelection();
     loadModel(generatePortalFrameTemplate());
-  }, [loadModel, importJsonAuto, clearSelection]);
+  }, [loadModel, importText, clearSelection]);
 
   return (
     <div className="app-layout">
@@ -330,7 +207,7 @@ export const App: React.FC = () => {
           <button onClick={() => window.dispatchEvent(new Event('frame-viewer:screenshot'))}>{t('app.reportPng')}</button>
           <button onClick={() => { clearSelection(); resetModel(); setInitialGenerator(true); setGeneratorOpen(true); }}>{t('app.new')}</button>
           <button className="top-icon-btn" onClick={toggleTheme} title={theme === 'dark' ? t('theme.light') : t('theme.dark')}>
-            {theme === 'dark' ? '\u2600' : '\u263E'}
+            {theme === 'dark' ? '☀' : '☾'}
           </button>
           <button className="top-icon-btn" onClick={() => setLang(lang === 'ja' ? 'en' : 'ja')} title={t('app.language')}>
             {lang === 'ja' ? 'EN' : 'JA'}
@@ -341,7 +218,7 @@ export const App: React.FC = () => {
         </div>
       </div>
       <div className="main-area">
-        <Toolbar onRunAnalysis={runAnalysis} onCancelAnalysis={cancelAnalysis} isAnalyzing={isAnalyzing} onOpenGenerator={() => { setInitialGenerator(false); setGeneratorOpen(true); }} onOpenTables={() => setTablesOpen(true)} />
+        <Toolbar onRunAnalysis={analysis.run} onCancelAnalysis={analysis.cancel} isAnalyzing={isAnalyzing} onOpenGenerator={() => { setInitialGenerator(false); setGeneratorOpen(true); }} onOpenTables={() => setTablesOpen(true)} />
         <div className="center-area">
           <CanvasPanel />
           <ResultsPanel />
@@ -360,16 +237,6 @@ export const App: React.FC = () => {
   );
 };
 
-function downloadText(filename: string, content: string, type: string): void {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 function captureViewerImage(): Promise<string> {
   return new Promise((resolve) => {
     let settled = false;
@@ -383,38 +250,4 @@ function captureViewerImage(): Promise<string> {
     }));
     window.setTimeout(() => finish(''), 150);
   });
-}
-
-function normalizeAnalyzeAllResponse(
-  response: Extract<AnyWorkerResponse, { type: 'analyze-all-success' }>,
-): AnalyzeAllSuccess {
-  const component = (
-    value: typeof response.envelope.displacements,
-  ): AnalyzeAllSuccess['envelope']['displacements'] => ({
-    min: Array.from(value.min),
-    max: Array.from(value.max),
-    minTargetIds: value.minTargetIds,
-    maxTargetIds: value.maxTargetIds,
-  });
-  return {
-    type: 'analyze-all-success',
-    results: response.results.map((result) => ({
-      target: result.target,
-      displacements: Array.from(result.displacements),
-      reactions: Array.from(result.reactions),
-      elementEndForces: Object.fromEntries(
-        Object.entries(result.elementEndForces).map(([memberId, values]) => [memberId, Array.from(values)]),
-      ),
-      diagrams: result.diagrams,
-      warnings: result.warnings,
-    })),
-    envelope: {
-      displacements: component(response.envelope.displacements),
-      reactions: component(response.envelope.reactions),
-      elementEndForces: Object.fromEntries(
-        Object.entries(response.envelope.elementEndForces).map(([memberId, value]) => [memberId, component(value)]),
-      ),
-    },
-    factorizationCount: response.factorizationCount,
-  };
 }

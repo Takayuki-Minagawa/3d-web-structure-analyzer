@@ -7,6 +7,7 @@ import { DOF_NAMES } from '../../../core/model/restraints';
 import { useT } from '../../../i18n';
 import { useProjectStore, type AnalysisModeUpdateResult } from '../../../state/projectStore';
 import { useSelectionStore } from '../../../state/selectionStore';
+import { useViewStore, type EigenDivisions } from '../../../state/viewStore';
 
 export const AnalysisSettingsEditor: React.FC = () => {
   const t = useT();
@@ -14,6 +15,10 @@ export const AnalysisSettingsEditor: React.FC = () => {
   const setAnalysisMode = useProjectStore((state) => state.setAnalysisMode);
   const flattenNodesTo2dPlane = useProjectStore((state) => state.flattenNodesTo2dPlane);
   const [error, setError] = React.useState<Extract<AnalysisModeUpdateResult, { ok: false }> | null>(null);
+  const eigenModeCount = useViewStore((state) => state.eigenModeCount);
+  const eigenDivisions = useViewStore((state) => state.eigenDivisions);
+  const setEigenModeCount = useViewStore((state) => state.setEigenModeCount);
+  const setEigenDivisions = useViewStore((state) => state.setEigenDivisions);
   const mode = getAnalysisMode(model);
   const errorConfig = error ? get2dModeConfig(error.mode) : null;
   const errorMessage = error && errorConfig
@@ -28,6 +33,10 @@ export const AnalysisSettingsEditor: React.FC = () => {
     <div className="prop-row"><label>{t('prop.analysisMode')}</label><select value={mode} onChange={(event) => { const next = event.target.value as AnalysisMode; const result = setAnalysisMode(next); setError(result.ok ? null : result); }}><option value="3d">{t('prop.analysisMode3d')}</option><option value="xz2d">{t('prop.analysisModeXz2d')}</option><option value="xy2d">{t('prop.analysisModeXy2d')}</option><option value="yz2d">{t('prop.analysisModeYz2d')}</option></select></div>
     {error && <><div className="warning-text">{errorMessage}</div><button className="small" onClick={() => { flattenNodesTo2dPlane(error.mode); const result = setAnalysisMode(error.mode); if (result.ok) setError(null); }}>{t('prop.switchAfterFlatten')}</button></>}
     {get2dModeConfig(mode) && <div className="muted">{t('prop.outOfPlaneLocked')}</div>}
+    <div className="prop-title">{t('prop.eigenSettings')}</div>
+    <div className="prop-row"><label>{t('prop.eigenModeCount')}</label><input type="number" min="1" max="30" step="1" value={eigenModeCount} onChange={(event) => { const value = event.target.valueAsNumber; if (Number.isFinite(value)) setEigenModeCount(value); }} /></div>
+    <div className="prop-row"><label>{t('prop.eigenDivisions')}</label><select value={String(eigenDivisions)} onChange={(event) => setEigenDivisions(event.target.value === 'auto' ? 'auto' : Number(event.target.value) as EigenDivisions)}><option value="auto">{t('prop.eigenDivisionsAuto')}</option>{[1, 2, 4, 8].map((count) => <option key={count} value={count}>{count}</option>)}</select></div>
+    <div className="muted">{t('prop.eigenDivisionsNote')}</div>
   </div>;
 };
 

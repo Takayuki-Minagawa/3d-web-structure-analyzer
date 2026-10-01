@@ -53,6 +53,7 @@ export function getDiagramOffsetDirection(
     case 'Mx':
     case 'model':
     case 'deformation':
+    case 'modeShape':
       return axes.z.clone();
   }
 }

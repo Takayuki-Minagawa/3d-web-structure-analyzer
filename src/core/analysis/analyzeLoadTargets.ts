@@ -104,6 +104,3 @@ export function analyzeAllLoadTargets(model: ProjectModel): MultiTargetAnalysisO
     factorizationCount: system.factorization ? 1 : 0,
   };
 }
-
-/** More discoverable alias for clients that primarily think in load cases. */
-export const analyzeAllLoadCases = analyzeAllLoadTargets;

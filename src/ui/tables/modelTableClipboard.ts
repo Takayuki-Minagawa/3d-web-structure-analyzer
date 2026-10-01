@@ -38,6 +38,12 @@ function number(value: string, label: string, row: number): number {
   return parsed;
 }
 
+/** Like `number`, but an empty cell is an error instead of zero. */
+function requiredNumber(value: string | undefined, label: string, row: number): number {
+  if (value === undefined || value === '') throw new Error(`Row ${row}: ${label} is required.`);
+  return number(value, label, row);
+}
+
 function positiveInteger(value: string, label: string, row: number): number {
   const parsed = Number(value.replace(/^[NM]/i, ''));
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -221,9 +227,9 @@ export function importModelTable(
       return {
         id: id('member-load'), memberId: member.id, loadCaseId,
         type: 'trapezoid', direction, value,
-        a: number(cells[5] ?? '', 'start a', row),
-        valueEnd: number(cells[6] ?? '', 'end value w2', row),
-        b: number(cells[7] ?? '', 'end b', row),
+        a: requiredNumber(cells[5], 'start a', row),
+        valueEnd: requiredNumber(cells[6], 'end value w2', row),
+        b: requiredNumber(cells[7], 'end b', row),
       };
     }
     if (type !== 'udl') throw new Error(`Row ${row}: unsupported member-load type "${type}".`);

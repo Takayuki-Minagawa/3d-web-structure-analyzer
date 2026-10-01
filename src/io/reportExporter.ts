@@ -8,7 +8,11 @@ import { getActiveLoadTargetName } from '../core/model/loadCases';
 import { memberLabel, nodeLabel } from '../core/model/displayNumbers';
 import { formatEngineering } from '../core/formatEngineering';
 import { DOF_NAMES } from '../core/model/restraints';
-import type { SerializedAnalysisEnvelope } from '../worker/protocol';
+import type {
+  SerializedAnalysisEnvelope,
+  SerializedBucklingResults,
+  SerializedModalResults,
+} from '../worker/protocol';
 
 export type ReportResultView =
   | {
@@ -30,6 +34,9 @@ export interface ReportInput {
   resultView?: ReportResultView;
   error: AnalysisError | null;
   generatedAt: Date;
+  /** Eigenvalue results that are current for `model`; omitted when absent or stale. */
+  modal?: SerializedModalResults<number[]>;
+  buckling?: SerializedBucklingResults<number[]>;
   /** Must be supplied by state-aware callers to prevent exporting stale results. */
   isResultStale?: boolean;
   /** Optional composited 3D viewport screenshot for printable reports. */
@@ -76,6 +83,8 @@ interface ReportDocument {
   inputTables: ReportTable[];
   /** Null when no analysis result is available. */
   resultTables: ReportTable[] | null;
+  /** Modal / buckling summaries; independent of the static result. */
+  eigenTables: ReportTable[];
   warnings: string[];
   errorMessage: string | null;
 }
@@ -220,6 +229,33 @@ function buildResultTables(model: ProjectModel, resolved: ResolvedReportResult):
   return tables;
 }
 
+function buildEigenTables(input: ReportInput): ReportTable[] {
+  const tables: ReportTable[] = [];
+  const percent = (ratio: number) => (ratio * 100).toFixed(2);
+  if (input.modal) {
+    tables.push(resultTable(
+      `Modal Analysis (${input.modal.divisions} element(s) per member)`,
+      [
+        'Mode', 'f [Hz]', 'T [s]', 'omega [rad/s]',
+        'beta X', 'beta Y', 'beta Z', 'Meff X [%]', 'Meff Y [%]', 'Meff Z [%]',
+      ],
+      input.modal.modes.map((mode) => [
+        String(mode.index), fmt(mode.frequency), fmt(mode.period), fmt(mode.omega),
+        ...mode.participation.map(fmt),
+        ...mode.effectiveMassRatio.map(percent),
+      ]),
+    ));
+  }
+  if (input.buckling) {
+    tables.push(resultTable(
+      `Buckling Analysis — ${input.buckling.target.name} (${input.buckling.divisions} element(s) per member)`,
+      ['Mode', 'Load factor'],
+      input.buckling.modes.map((mode) => [String(mode.index), fmt(mode.loadFactor)]),
+    ));
+  }
+  return tables;
+}
+
 function buildReportDocument(input: ReportInput): ReportDocument {
   assertReportExportable(input);
   const { model, error, generatedAt } = input;
@@ -240,6 +276,7 @@ function buildReportDocument(input: ReportInput): ReportDocument {
     ],
     inputTables: buildInputTables(model),
     resultTables: resolved ? buildResultTables(model, resolved) : null,
+    eigenTables: error ? [] : buildEigenTables(input),
     warnings: resolved?.result.warnings ?? [],
     errorMessage: error?.message ?? null,
   };
@@ -269,11 +306,8 @@ export function generateMarkdownReport(input: ReportInput): string {
   for (const table of doc.inputTables) {
     lines.push(`## ${table.title}`, '', markdownTable(table.headers, table.rows), '');
   }
-  if (!doc.resultTables) {
-    lines.push('## Results', '', NO_RESULT_MESSAGE, '');
-    return lines.join('\n');
-  }
-  for (const table of doc.resultTables) {
+  if (!doc.resultTables) lines.push('## Results', '', NO_RESULT_MESSAGE, '');
+  for (const table of [...(doc.resultTables ?? []), ...doc.eigenTables]) {
     lines.push(`## ${table.title}`, '', markdownTable(table.headers, table.rows), '');
   }
   if (doc.warnings.length > 0) {
@@ -303,11 +337,8 @@ export function generateCsvReport(input: ReportInput): string {
   }
 
   doc.inputTables.forEach(pushTable);
-  if (!doc.resultTables) {
-    rows.push(['Results'], [NO_RESULT_MESSAGE]);
-    return rows.map(csvRow).join('\n');
-  }
-  doc.resultTables.forEach(pushTable);
+  if (!doc.resultTables) rows.push(['Results'], [NO_RESULT_MESSAGE], []);
+  [...(doc.resultTables ?? []), ...doc.eigenTables].forEach(pushTable);
   if (doc.warnings.length > 0) {
     rows.push(['Warnings'], ...doc.warnings.map((warning) => [warning]));
   }
@@ -319,17 +350,18 @@ export function generatePrintableReportHtml(input: ReportInput): string {
   const { model, viewportImageDataUrl } = input;
   const tableSection = (table: ReportTable) =>
     sectionHtml(table.title, htmlTable(table.headers, table.rows));
-  const resultSections = doc.resultTables
-    ? [
-        ...doc.resultTables.map(tableSection),
-        doc.warnings.length
-          ? sectionHtml('Warnings', `<ul>${doc.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul>`)
-          : '',
-      ].join('')
-    : sectionHtml(
-        doc.errorMessage !== null ? 'Analysis Error' : 'Results',
-        `<p class="${doc.errorMessage !== null ? 'error' : ''}">${escapeHtml(doc.errorMessage ?? NO_RESULT_MESSAGE)}</p>`,
-      );
+  const resultSections = [
+    doc.resultTables
+      ? doc.resultTables.map(tableSection).join('')
+      : sectionHtml(
+          doc.errorMessage !== null ? 'Analysis Error' : 'Results',
+          `<p class="${doc.errorMessage !== null ? 'error' : ''}">${escapeHtml(doc.errorMessage ?? NO_RESULT_MESSAGE)}</p>`,
+        ),
+    ...doc.eigenTables.map(tableSection),
+    doc.warnings.length
+      ? sectionHtml('Warnings', `<ul>${doc.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul>`)
+      : '',
+  ].join('');
   return [
     '<!doctype html>',
     '<html>',

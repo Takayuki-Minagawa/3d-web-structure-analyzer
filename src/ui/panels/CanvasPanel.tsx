@@ -1,8 +1,10 @@
-import React, { useRef, useEffect, useCallback, useState } from 'react';
+import React, { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { ThreeApp } from '../../rendering/threeApp';
 import type { EditAction } from '../../rendering/threeApp';
 import { useProjectStore } from '../../state/projectStore';
-import { useViewStore } from '../../state/viewStore';
+import { isForceDiagramMode, useViewStore } from '../../state/viewStore';
+import { modeShapeAsResult } from '../../state/analysisResults';
+import { formatEngineering } from '../../core/formatEngineering';
 import { useSelectionStore } from '../../state/selectionStore';
 import {
   getAnalysisMode,
@@ -29,6 +31,9 @@ export const CanvasPanel: React.FC = () => {
 
   const model = useProjectStore((s) => s.model);
   const analysisResult = useProjectStore((s) => s.analysisResult);
+  const isResultStale = useProjectStore((s) => s.isResultStale);
+  const modalResult = useProjectStore((s) => s.modalResult);
+  const bucklingResult = useProjectStore((s) => s.bucklingResult);
   const fitViewVersion = useProjectStore((s) => s.fitViewVersion);
   const addNode = useProjectStore((s) => s.addNode);
   const addMember = useProjectStore((s) => s.addMember);
@@ -49,10 +54,12 @@ export const CanvasPanel: React.FC = () => {
   const gridSnap = useViewStore((s) => s.gridSnap);
   const gridSize = useViewStore((s) => s.gridSize);
   const deformationScale = useViewStore((s) => s.deformationScale);
+  const modeShapeScale = useViewStore((s) => s.modeShapeScale);
   const diagramScale = useViewStore((s) => s.diagramScale);
   const labelMode = useViewStore((s) => s.labelMode);
   const workPlaneAxis = useViewStore((s) => s.workPlaneAxis);
   const workPlaneOffset = useViewStore((s) => s.workPlaneOffset);
+  const shapeView = useViewStore((s) => s.shapeView);
   const setDisplayMode = useViewStore((s) => s.setDisplayMode);
   const setShowNodeLabels = useViewStore((s) => s.setShowNodeLabels);
   const setShowMemberLabels = useViewStore((s) => s.setShowMemberLabels);
@@ -63,6 +70,7 @@ export const CanvasPanel: React.FC = () => {
   const setGridSize = useViewStore((s) => s.setGridSize);
   const setAnimateDeformation = useViewStore((s) => s.setAnimateDeformation);
   const setDeformationScale = useViewStore((s) => s.setDeformationScale);
+  const setModeShapeScale = useViewStore((s) => s.setModeShapeScale);
   const setDiagramScale = useViewStore((s) => s.setDiagramScale);
   const setWorkPlaneAxis = useViewStore((s) => s.setWorkPlaneAxis);
   const setWorkPlaneOffset = useViewStore((s) => s.setWorkPlaneOffset);
@@ -193,10 +201,31 @@ export const CanvasPanel: React.FC = () => {
     }
   }, [fitViewVersion]);
 
-  // Update results
+  // Results from before a model edit would be drawn on the wrong geometry.
+  const currentResult = isResultStale ? null : analysisResult;
   useEffect(() => {
-    appRef.current?.setResult(analysisResult);
-  }, [analysisResult]);
+    appRef.current?.setResult(currentResult);
+  }, [currentResult]);
+
+  // Selected eigenmode, as long as its analysis still matches the model.
+  const selectedMode = useMemo(() => {
+    if (!shapeView) return null;
+    const source = shapeView.kind === 'modal' ? modalResult : bucklingResult;
+    if (!source || source.sourceModel !== model) return null;
+    const mode = source.modes[shapeView.index];
+    if (!mode) return null;
+    const value = 'frequency' in mode
+      ? `${formatEngineering(mode.frequency)} Hz`
+      : `λ = ${formatEngineering(mode.loadFactor)}`;
+    return {
+      result: modeShapeAsResult(mode.shape),
+      caption: `${t(shapeView.kind === 'modal' ? 'results.modal' : 'results.buckling')} ${mode.index}: ${value}`,
+    };
+  }, [shapeView, modalResult, bucklingResult, model, t]);
+  const modeShapeResult = selectedMode?.result ?? null;
+  useEffect(() => {
+    appRef.current?.setModeShape(modeShapeResult);
+  }, [modeShapeResult]);
 
   // Update display mode
   useEffect(() => {
@@ -212,6 +241,10 @@ export const CanvasPanel: React.FC = () => {
   useEffect(() => {
     appRef.current?.setDeformationScale(deformationScale);
   }, [deformationScale]);
+
+  useEffect(() => {
+    appRef.current?.setModeShapeScale(modeShapeScale);
+  }, [modeShapeScale]);
 
   useEffect(() => {
     appRef.current?.setDiagramScale(diagramScale);
@@ -311,6 +344,7 @@ export const CanvasPanel: React.FC = () => {
             <select value={displayMode} onChange={(event) => setDisplayMode(event.target.value as typeof displayMode)}>
               <option value="model">{t('display.model')}</option>
               <option value="deformation">{t('display.deformation')}</option>
+              <option value="modeShape">{t('display.modeShape')}</option>
               {(['N', 'Vy', 'Vz', 'Mx', 'My', 'Mz'] as const).map((mode) => <option key={mode} value={mode}>{mode}</option>)}
             </select>
           </label>
@@ -328,22 +362,35 @@ export const CanvasPanel: React.FC = () => {
               <option value="selected">{t('canvas.labelSelected')}</option>
             </select>
           </label>
-          {displayMode === 'deformation' && (
+          {displayMode === 'modeShape' && (
+            <div className="muted">{selectedMode?.caption ?? t('canvas.modeShapeHint')}</div>
+          )}
+          {(displayMode === 'deformation' || displayMode === 'modeShape') && (
             <>
               <label className="canvas-palette-toggle">
                 <span>{t('canvas.animateDeformation')}</span>
                 <input type="checkbox" checked={animateDeformation} onChange={(event) => setAnimateDeformation(event.target.checked)} />
               </label>
-              <label>
-                {t('prop.deformScale')}
-                <input type="number" min="0" step="1" value={deformationScale} onChange={(event) => {
-                  const value = event.target.valueAsNumber;
-                  if (Number.isFinite(value)) setDeformationScale(Math.max(0, value));
-                }} />
-              </label>
+              {displayMode === 'deformation' ? (
+                <label>
+                  {t('prop.deformScale')}
+                  <input type="number" min="0" step="1" value={deformationScale} onChange={(event) => {
+                    const value = event.target.valueAsNumber;
+                    if (Number.isFinite(value)) setDeformationScale(Math.max(0, value));
+                  }} />
+                </label>
+              ) : (
+                <label>
+                  {t('canvas.modeShapeScale')}
+                  <input type="number" min="0" step="0.5" value={modeShapeScale} onChange={(event) => {
+                    const value = event.target.valueAsNumber;
+                    if (Number.isFinite(value)) setModeShapeScale(value);
+                  }} />
+                </label>
+              )}
             </>
           )}
-          {displayMode !== 'model' && displayMode !== 'deformation' && (
+          {isForceDiagramMode(displayMode) && (
             <label>
               {t('prop.diagramScale')}
               <input type="number" min="0" step="0.1" value={diagramScale} onChange={(event) => {

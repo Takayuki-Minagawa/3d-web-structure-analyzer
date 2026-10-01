@@ -18,11 +18,15 @@ import type {
   NodalSpringSupport,
   PrescribedDisplacement,
 } from '../core/model/types';
-import type {
-  AnalyzeAllSuccess,
-  SerializedTargetResult,
-  WorkerResponse,
-} from '../worker/protocol';
+import {
+  targetResultToAnalysisResult,
+  type EigenAnalysisKind,
+  type StaticAnalysisOutcome,
+  type StoredBucklingResult,
+  type StoredEnvelope,
+  type StoredModalResult,
+  type StoredTargetResult,
+} from './analysisResults';
 import { importJsonTextAuto, type JsonImportResult } from '../io/jsonImporter';
 import {
   DEFAULT_ANALYSIS_MODE,
@@ -239,11 +243,14 @@ function replacementState(
   return {
     model: normalizeProjectModel(model),
     analysisResult: null,
-    analysisResults: [] as AnalyzeAllSuccess['results'],
+    analysisResults: [] as StoredTargetResult[],
     analysisEnvelope: null,
     analysisFactorizationCount: null,
     analysisResultView: null,
     analysisError: null,
+    modalResult: null,
+    bucklingResult: null,
+    eigenError: null,
     isAnalyzing: false,
     isResultStale: false,
     fitViewVersion: fitViewVersion + 1,
@@ -251,26 +258,18 @@ function replacementState(
   } as const;
 }
 
-function targetResultToAnalysisResult(
-  result: SerializedTargetResult<number[]>,
-): AnalysisResult {
-  return {
-    displacements: result.displacements,
-    reactions: result.reactions,
-    elementEndForces: result.elementEndForces,
-    diagrams: result.diagrams,
-    warnings: result.warnings,
-  };
-}
-
 interface ProjectState {
   model: ProjectModel;
   analysisResult: AnalysisResult | null;
-  analysisResults: AnalyzeAllSuccess['results'];
-  analysisEnvelope: AnalyzeAllSuccess['envelope'] | null;
+  analysisResults: StoredTargetResult[];
+  analysisEnvelope: StoredEnvelope | null;
   analysisFactorizationCount: number | null;
   analysisResultView: AnalysisResultView | null;
   analysisError: AnalysisError | null;
+  /** Eigen results stay bound to the model object they were computed from. */
+  modalResult: StoredModalResult | null;
+  bucklingResult: StoredBucklingResult | null;
+  eigenError: { kind: EigenAnalysisKind; error: AnalysisError } | null;
   isAnalyzing: boolean;
   isResultStale: boolean;
   /** Incremented when a full model load occurs and the view should fit to new content. */
@@ -336,7 +335,10 @@ interface ProjectState {
 
   // Analysis
   setAnalyzing: (v: boolean) => void;
-  setAnalysisResult: (resp: WorkerResponse | AnalyzeAllSuccess) => void;
+  setAnalysisResult: (outcome: StaticAnalysisOutcome) => void;
+  setModalResult: (result: StoredModalResult) => void;
+  setBucklingResult: (result: StoredBucklingResult) => void;
+  setEigenError: (kind: EigenAnalysisKind, error: AnalysisError) => void;
   selectAnalysisResultView: (view: AnalysisResultView) => void;
   markResultStale: () => void;
   setAnalysisMode: (mode: AnalysisMode) => AnalysisModeUpdateResult;
@@ -382,6 +384,9 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
   analysisFactorizationCount: null,
   analysisResultView: null,
   analysisError: null,
+  modalResult: null,
+  bucklingResult: null,
+  eigenError: null,
   isAnalyzing: false,
   isResultStale: false,
   fitViewVersion: 0,
@@ -957,56 +962,57 @@ export const useProjectStore = create<ProjectState>()(temporal((set, get) => ({
 
   setAnalyzing: (v) => set({ isAnalyzing: v }),
 
-  setAnalysisResult: (resp) => {
-    if (resp.type === 'analyze-all-success') {
-      set((s) => {
-        const preferredTargetId = s.model.activeLoadCombinationId
-          ?? getActiveLoadCaseId(s.model);
-        const selected = resp.results.find((result) => result.target.id === preferredTargetId)
-          ?? resp.results[0];
-        return {
-          analysisResult: selected ? targetResultToAnalysisResult(selected) : null,
-          analysisResults: resp.results,
-          analysisEnvelope: resp.envelope,
-          analysisFactorizationCount: resp.factorizationCount,
-          analysisResultView: selected
-            ? { kind: 'target' as const, targetId: selected.target.id }
-            : null,
-          analysisError: null,
-          isAnalyzing: false,
-          isResultStale: false,
-        };
-      });
-    } else if (resp.type === 'analyze-success') {
-      set({
-        analysisResult: {
-          displacements: resp.displacements,
-          reactions: resp.reactions,
-          elementEndForces: resp.elementEndForces,
-          diagrams: resp.diagrams,
-          warnings: resp.warnings,
-        },
-        analysisResults: [],
-        analysisEnvelope: null,
-        analysisFactorizationCount: null,
-        analysisResultView: null,
-        analysisError: null,
-        isAnalyzing: false,
-        isResultStale: false,
-      });
-    } else {
+  setAnalysisResult: (outcome) => {
+    if (outcome.type === 'analyze-error') {
       set({
         analysisResult: null,
         analysisResults: [],
         analysisEnvelope: null,
         analysisFactorizationCount: null,
         analysisResultView: null,
-        analysisError: resp.error,
+        analysisError: outcome.error,
         isAnalyzing: false,
         isResultStale: false,
       });
+      return;
     }
+    set((s) => {
+      const preferredTargetId = s.model.activeLoadCombinationId
+        ?? getActiveLoadCaseId(s.model);
+      const selected = outcome.results.find((result) => result.target.id === preferredTargetId)
+        ?? outcome.results[0];
+      return {
+        analysisResult: selected ? targetResultToAnalysisResult(selected) : null,
+        analysisResults: outcome.results,
+        analysisEnvelope: outcome.envelope,
+        analysisFactorizationCount: outcome.factorizationCount,
+        analysisResultView: selected
+          ? { kind: 'target' as const, targetId: selected.target.id }
+          : null,
+        analysisError: null,
+        isAnalyzing: false,
+        isResultStale: false,
+      };
+    });
   },
+
+  setModalResult: (result) => set((s) => ({
+    modalResult: result,
+    eigenError: s.eigenError?.kind === 'modal' ? null : s.eigenError,
+    isAnalyzing: false,
+  })),
+
+  setBucklingResult: (result) => set((s) => ({
+    bucklingResult: result,
+    eigenError: s.eigenError?.kind === 'buckling' ? null : s.eigenError,
+    isAnalyzing: false,
+  })),
+
+  setEigenError: (kind, error) => set({
+    ...(kind === 'modal' ? { modalResult: null } : { bucklingResult: null }),
+    eigenError: { kind, error },
+    isAnalyzing: false,
+  }),
 
   selectAnalysisResultView: (view) => {
     set((s) => {

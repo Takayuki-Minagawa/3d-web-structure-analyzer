@@ -10,6 +10,12 @@ export interface DeformationGeometryState {
   displacementVectors: Float32Array;
 }
 
+/**
+ * Build the deformed-shape line set. Members follow the deflection samples
+ * of their result diagram (local ux/uy/uz along the member), so span loads
+ * and released ends show as curves; members without samples fall back to a
+ * straight line between the displaced nodes.
+ */
 export function createDeformationGeometry(
   model: ProjectModel,
   result: AnalysisResult,
@@ -18,6 +24,11 @@ export function createDeformationGeometry(
   const nodeIndices = new Map(model.nodes.map((node, index) => [node.id, index]));
   const base: number[] = [];
   const displacement: number[] = [];
+  const nodalDisplacement = (index: number): [number, number, number] => [
+    result.displacements[index * 6] ?? 0,
+    result.displacements[index * 6 + 1] ?? 0,
+    result.displacements[index * 6 + 2] ?? 0,
+  ];
 
   for (const member of model.members) {
     const nodeI = nodeMap.get(member.ni);
@@ -25,15 +36,35 @@ export function createDeformationGeometry(
     const indexI = nodeIndices.get(member.ni);
     const indexJ = nodeIndices.get(member.nj);
     if (!nodeI || !nodeJ || indexI === undefined || indexJ === undefined) continue;
-    base.push(nodeI.x, nodeI.y, nodeI.z, nodeJ.x, nodeJ.y, nodeJ.z);
-    displacement.push(
-      result.displacements[indexI * 6] ?? 0,
-      result.displacements[indexI * 6 + 1] ?? 0,
-      result.displacements[indexI * 6 + 2] ?? 0,
-      result.displacements[indexJ * 6] ?? 0,
-      result.displacements[indexJ * 6 + 1] ?? 0,
-      result.displacements[indexJ * 6 + 2] ?? 0,
-    );
+
+    const points = result.diagrams[member.id]?.points;
+    const axes = points && points.length >= 2
+      ? getThreeLocalAxes(nodeI, nodeJ, member.codeAngle)
+      : null;
+    if (!points || !axes) {
+      base.push(nodeI.x, nodeI.y, nodeI.z, nodeJ.x, nodeJ.y, nodeJ.z);
+      displacement.push(...nodalDisplacement(indexI), ...nodalDisplacement(indexJ));
+      continue;
+    }
+
+    const samples = points.map((point) => ({
+      base: [
+        nodeI.x + axes.x.x * point.x,
+        nodeI.y + axes.x.y * point.x,
+        nodeI.z + axes.x.z * point.x,
+      ],
+      displacement: [
+        axes.x.x * point.ux + axes.y.x * point.uy + axes.z.x * point.uz,
+        axes.x.y * point.ux + axes.y.y * point.uy + axes.z.y * point.uz,
+        axes.x.z * point.ux + axes.y.z * point.uy + axes.z.z * point.uz,
+      ],
+    }));
+    for (let index = 1; index < samples.length; index += 1) {
+      const previous = samples[index - 1]!;
+      const current = samples[index]!;
+      base.push(...previous.base, ...current.base);
+      displacement.push(...previous.displacement, ...current.displacement);
+    }
   }
   if (base.length === 0) return null;
 
@@ -72,6 +103,7 @@ export function getDiagramValue(point: DiagramPoint, mode: DisplayMode): number 
     case 'Mz': return point.Mz;
     case 'model':
     case 'deformation':
+    case 'modeShape':
       return 0;
   }
 }

@@ -1254,3 +1254,28 @@ button.danger,
   .template-grid,
   .generator-fields { grid-template-columns: 1fr; }
 }
+
+/* Eigenvalue result rows select the mode shape shown in the viewport. */
+.eigen-row {
+  cursor: pointer;
+}
+
+.eigen-row:hover td {
+  background: var(--bg);
+}
+
+.eigen-row.active td {
+  background: var(--bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Keep the analysis actions reachable when the toolbar has to scroll. */
+.toolbar-analysis {
+  position: sticky;
+  bottom: -8px;
+  margin: auto -4px -8px;
+  padding: 6px 4px 8px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+}

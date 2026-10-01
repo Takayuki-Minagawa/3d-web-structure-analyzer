@@ -3,27 +3,33 @@ import type {
   AnalysisError,
   DiagramPoint,
   AnalysisTarget,
+  BucklingMode,
+  DirectionTriple,
+  EigenAnalysisOptions,
+  ModalMode,
 } from '../core/model/types';
 
 export type WorkerRequestId = string;
 
-// Legacy messages remain supported until the main-thread client adopts v2.
-export interface AnalyzeRequest {
-  type: 'analyze';
+interface AnalysisRequestBase {
+  /** Correlates the response; responses without a matching id are ignored. */
+  requestId: WorkerRequestId;
   model: ProjectModel;
 }
 
-export interface AnalyzeRequestV2 extends AnalyzeRequest {
-  requestId: WorkerRequestId;
-}
-
-export interface AnalyzeAllRequest {
+/** Static analysis of every load case and combination. */
+export interface AnalyzeAllRequest extends AnalysisRequestBase {
   type: 'analyze-all';
-  model: ProjectModel;
 }
 
-export interface AnalyzeAllRequestV2 extends AnalyzeAllRequest {
-  requestId: WorkerRequestId;
+export interface AnalyzeModalRequest extends AnalysisRequestBase {
+  type: 'analyze-modal';
+  options?: EigenAnalysisOptions;
+}
+
+export interface AnalyzeBucklingRequest extends AnalysisRequestBase {
+  type: 'analyze-buckling';
+  options?: EigenAnalysisOptions & { targetId?: string };
 }
 
 export interface CancelRequest {
@@ -32,82 +38,90 @@ export interface CancelRequest {
 }
 
 export type AnalysisExecutionRequest =
-  | AnalyzeRequest
-  | AnalyzeRequestV2
   | AnalyzeAllRequest
-  | AnalyzeAllRequestV2;
-export type AnalysisExecutionRequestV2 = AnalyzeRequestV2 | AnalyzeAllRequestV2;
+  | AnalyzeModalRequest
+  | AnalyzeBucklingRequest;
+export type AnalysisKind = 'static' | 'modal' | 'buckling';
 export type WorkerRequest = AnalysisExecutionRequest | CancelRequest;
 
-export interface AnalyzeSuccess {
-  type: 'analyze-success';
-  displacements: number[];
-  reactions: number[];
-  elementEndForces: Record<string, number[]>;
-  diagrams: Record<string, { memberId: string; points: DiagramPoint[] }>;
-  warnings: string[];
-}
+/** Numeric payloads cross the worker boundary as transferable typed arrays. */
+type NumericArray = number[] | Float64Array;
 
-export interface AnalyzeError {
-  type: 'analyze-error';
-  error: AnalysisError;
-}
+export type SerializedDiagrams = Record<string, { memberId: string; points: DiagramPoint[] }>;
 
-export interface SerializedTargetResult<TArray extends number[] | Float64Array> {
+export interface SerializedTargetResult<TArray extends NumericArray> {
   target: AnalysisTarget;
   displacements: TArray;
   reactions: TArray;
   elementEndForces: Record<string, TArray>;
-  diagrams: Record<string, { memberId: string; points: DiagramPoint[] }>;
+  diagrams: SerializedDiagrams;
   warnings: string[];
 }
 
-export interface SerializedComponentEnvelope<TArray extends number[] | Float64Array> {
+export interface SerializedComponentEnvelope<TArray extends NumericArray> {
   min: TArray;
   max: TArray;
   minTargetIds: string[];
   maxTargetIds: string[];
 }
 
-export interface SerializedAnalysisEnvelope<TArray extends number[] | Float64Array> {
+export interface SerializedAnalysisEnvelope<TArray extends NumericArray> {
   displacements: SerializedComponentEnvelope<TArray>;
   reactions: SerializedComponentEnvelope<TArray>;
   elementEndForces: Record<string, SerializedComponentEnvelope<TArray>>;
 }
 
-export interface AnalyzeAllSuccess {
-  type: 'analyze-all-success';
-  results: Array<SerializedTargetResult<number[]>>;
-  envelope: SerializedAnalysisEnvelope<number[]>;
+export interface SerializedStaticResults<TArray extends NumericArray> {
+  results: Array<SerializedTargetResult<TArray>>;
+  envelope: SerializedAnalysisEnvelope<TArray>;
   factorizationCount: number;
 }
 
-/** Legacy response consumed by the current store. */
-/** Existing single-target main-thread clients intentionally keep this narrow. */
-export type WorkerResponse = AnalyzeSuccess | AnalyzeError;
+export interface SerializedModeShape<TArray extends NumericArray> {
+  displacements: TArray;
+  diagrams: SerializedDiagrams;
+}
 
-export interface AnalyzeSuccessV2 {
-  type: 'analyze-success';
-  requestId: WorkerRequestId;
-  displacements: Float64Array;
-  reactions: Float64Array;
-  elementEndForces: Record<string, Float64Array>;
-  diagrams: Record<string, { memberId: string; points: DiagramPoint[] }>;
+export type SerializedModalMode<TArray extends NumericArray> =
+  Omit<ModalMode, 'shape'> & { shape: SerializedModeShape<TArray> };
+export type SerializedBucklingMode<TArray extends NumericArray> =
+  Omit<BucklingMode, 'shape'> & { shape: SerializedModeShape<TArray> };
+
+export interface SerializedModalResults<TArray extends NumericArray> {
+  modes: Array<SerializedModalMode<TArray>>;
+  totalMass: DirectionTriple;
+  divisions: number;
+  freeDofCount: number;
   warnings: string[];
 }
 
-export interface AnalyzeErrorV2 {
+export interface SerializedBucklingResults<TArray extends NumericArray> {
+  modes: Array<SerializedBucklingMode<TArray>>;
+  target: AnalysisTarget;
+  divisions: number;
+  freeDofCount: number;
+  warnings: string[];
+}
+
+export interface AnalyzeAllSuccess extends SerializedStaticResults<Float64Array> {
+  type: 'analyze-all-success';
+  requestId: WorkerRequestId;
+}
+
+export interface ModalSuccess extends SerializedModalResults<Float64Array> {
+  type: 'modal-success';
+  requestId: WorkerRequestId;
+}
+
+export interface BucklingSuccess extends SerializedBucklingResults<Float64Array> {
+  type: 'buckling-success';
+  requestId: WorkerRequestId;
+}
+
+export interface AnalyzeError {
   type: 'analyze-error';
   requestId: WorkerRequestId;
   error: AnalysisError;
-}
-
-export interface AnalyzeAllSuccessV2 {
-  type: 'analyze-all-success';
-  requestId: WorkerRequestId;
-  results: Array<SerializedTargetResult<Float64Array>>;
-  envelope: SerializedAnalysisEnvelope<Float64Array>;
-  factorizationCount: number;
 }
 
 export interface AnalyzeCanceled {
@@ -115,15 +129,9 @@ export interface AnalyzeCanceled {
   requestId: WorkerRequestId;
 }
 
-export type WorkerResponseV2 =
-  | AnalyzeSuccessV2
-  | AnalyzeAllSuccessV2
-  | AnalyzeErrorV2
+export type WorkerResponse =
+  | AnalyzeAllSuccess
+  | ModalSuccess
+  | BucklingSuccess
+  | AnalyzeError
   | AnalyzeCanceled;
-export type AnyWorkerResponse = WorkerResponse | AnalyzeAllSuccess | WorkerResponseV2;
-
-export function isAnalyzeRequestV2(
-  request: AnalysisExecutionRequest
-): request is AnalysisExecutionRequestV2 {
-  return 'requestId' in request && typeof request.requestId === 'string';
-}
