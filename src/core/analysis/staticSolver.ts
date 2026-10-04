@@ -12,10 +12,28 @@ import {
 import { computeReactions, computeAllElementEndForces } from './recover';
 import { generateAllDiagrams } from './diagrams';
 import { createSingularStabilityDiagnostics } from './stabilityDiagnostics';
-import { createAnalysisException } from './analysisError';
+import { createAnalysisException, type AnalysisErrorDetails } from './analysisError';
 
+/** Two dense 3600 × 3600 matrices use about 198 MiB before result storage. */
+export const MAX_STATIC_TOTAL_DOFS = 3600;
 const MAX_TRANSLATION_LENGTH_RATIO = 100;
 const MAX_ROTATION_RADIANS = 100;
+
+function assertFiniteValues(
+  values: Iterable<number>,
+  quantity: string,
+  details: AnalysisErrorDetails = {}
+): void {
+  for (const value of values) {
+    if (!Number.isFinite(value)) {
+      throw createAnalysisException(
+        'numerical',
+        `${quantity}の計算結果が有限値ではありません。荷重・剛性・単位系の値が大きすぎるか小さすぎないか確認してください。`,
+        details
+      );
+    }
+  }
+}
 
 /**
  * Stiffness-side state shared by every load set of one structural model:
@@ -34,6 +52,12 @@ export interface StaticSystem {
  * AnalysisException carrying stability diagnostics for unstable models.
  */
 export function prepareStaticSystem(model: IndexedModel): StaticSystem {
+  if (model.dofCount > MAX_STATIC_TOTAL_DOFS) {
+    throw createAnalysisException(
+      'validation',
+      `静的解析の全体自由度数 ${model.dofCount} が上限 ${MAX_STATIC_TOTAL_DOFS} を超えています。密行列のメモリ使用量を抑えるため、節点数を ${MAX_STATIC_TOTAL_DOFS / 6} 以下に減らしてください。`
+    );
+  }
   const K = assembleGlobalStiffness(model);
   const { freeDofs, fixedDofs } = partitionDofs(model);
   if (freeDofs.length === 0) return { K, freeDofs, fixedDofs, factorization: null };
@@ -96,6 +120,7 @@ export function buildPrescribedDisplacementVector(
       byCase.set(caseKey, bySourceDof);
     }
     const values = dofValues(item);
+    assertFiniteValues(values, '強制変位', { nodeId: item.nodeId });
     for (let localDof = 0; localDof < 6; localDof++) {
       const value = values[localDof]!;
       if (value === 0) continue;
@@ -123,6 +148,7 @@ export function buildPrescribedDisplacementVector(
   for (const bySourceDof of byCase.values()) {
     const assigned = new Map<number, SourceEntry>();
     for (const [sourceDof, entry] of bySourceDof) {
+      assertFiniteValues([entry.value], '強制変位の合計', { nodeId: entry.nodeId });
       if (Math.abs(entry.value) <= entry.largestTerm * PRESCRIBED_CANCELLATION_TOLERANCE) continue;
       const dof = model.dofMap[sourceDof]!;
       const previous = assigned.get(dof);
@@ -141,6 +167,7 @@ export function buildPrescribedDisplacementVector(
       }
     }
   }
+  assertFiniteValues(prescribed, '強制変位の合計');
   return prescribed;
 }
 
@@ -162,6 +189,7 @@ export function solveStaticLoadSet(
   const { K, freeDofs, fixedDofs, factorization } = system;
   const n = loadModel.dofCount;
   const F = buildGlobalForceVector(loadModel);
+  assertFiniteValues(F, '荷重ベクトル');
   const d = new Float64Array(n);
 
   const prescribed = buildPrescribedDisplacementVector(loadModel, fixedDofs);
@@ -199,6 +227,7 @@ export function completeAnalysisOutput(
   fixedDofs: number[],
   warnings: string[] = []
 ): AnalysisOutput {
+  assertFiniteValues(d, '節点変位');
   const { dofMap } = model;
   for (let i = 0; i < model.dofCount; i++) {
     if (dofMap[i] !== i) d[i] = d[dofMap[i]!]!;
@@ -213,9 +242,18 @@ export function completeAnalysisOutput(
     model.nodeSprings,
     model.dofMap
   );
+  assertFiniteValues(reactions, '反力');
   const memberLoadsByMember = groupMemberLoadsByMember(model.memberLoads);
   const elementEndForces = computeAllElementEndForces(model, d, memberLoadsByMember);
+  for (const [elementId, forces] of elementEndForces) {
+    assertFiniteValues(forces, '部材端力', { elementId });
+  }
   const diagrams = generateAllDiagrams(model, elementEndForces, d, memberLoadsByMember);
+  for (const [elementId, diagram] of diagrams) {
+    for (const point of diagram.points) {
+      assertFiniteValues(Object.values(point), '断面力・変位図', { elementId });
+    }
+  }
   appendDisplacementWarnings(model, d, warnings);
 
   return { displacements: d, reactions, elementEndForces, diagrams, warnings };

@@ -21,7 +21,7 @@ import {
   findMembersWithUnsupportedTorsionRestraint,
   formatUnsupportedTorsionRestraintMessage,
 } from './torsionRestraint';
-import { findCouplingIssues } from './couplings';
+import { findCouplingIssues, isActiveNodeCoupling } from './couplings';
 import { memberLabel, nodeLabel } from './displayNumbers';
 import { DOF_NAMES, dofValues } from './restraints';
 
@@ -521,7 +521,7 @@ function validateSupportSufficiency({ model, errors, analysisMode }: ValidationC
   }
 }
 
-function validateIsolatedNodes({ model, errors }: ValidationContext): void {
+function validateIsolatedNodes({ model, errors, analysisMode, nodeById }: ValidationContext): void {
   const connectedNodes = new Set<string>();
   for (const m of model.members) {
     connectedNodes.add(m.ni);
@@ -532,8 +532,16 @@ function validateIsolatedNodes({ model, errors }: ValidationContext): void {
       connectedNodes.add(spring.nodeId);
     }
   }
+  const nodeIds = new Set(nodeById.keys());
+  for (const coupling of model.couplings ?? []) {
+    if (isActiveNodeCoupling(coupling, nodeIds)) {
+      connectedNodes.add(coupling.masterNodeId);
+      connectedNodes.add(coupling.slaveNodeId);
+    }
+  }
   for (const n of model.nodes) {
-    if (!connectedNodes.has(n.id) && model.members.length > 0) {
+    const fullyRestrained = dofValues(getEffectiveRestraint(n.restraint, analysisMode)).every(Boolean);
+    if (!connectedNodes.has(n.id) && !fullyRestrained && model.members.length > 0) {
       errors.push({
         type: 'validation',
         message: `節点 ${nodeLabel(n)} はどの部材にも接続されていません（孤立節点）。`,

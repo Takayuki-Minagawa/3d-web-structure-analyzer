@@ -1,5 +1,16 @@
-import type { ProjectModel } from './types';
+import type { CouplingConstraint, ProjectModel } from './types';
 import { DOF_NAMES, dofValues } from './restraints';
+
+/** Whether a declared coupling connects two existing nodes in at least one DOF. */
+export function isActiveNodeCoupling(
+  coupling: CouplingConstraint,
+  nodeIds: ReadonlySet<string>
+): boolean {
+  return coupling.masterNodeId !== coupling.slaveNodeId
+    && nodeIds.has(coupling.masterNodeId)
+    && nodeIds.has(coupling.slaveNodeId)
+    && dofValues(coupling).some(Boolean);
+}
 
 export type CouplingIssueKind =
   | 'missing-master'

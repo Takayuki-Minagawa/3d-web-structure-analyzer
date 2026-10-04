@@ -7,6 +7,8 @@ import { HelpDialog } from '../ui/HelpDialog';
 import { ModelGeneratorDialog } from '../ui/dialogs/ModelGeneratorDialog';
 import { ModelTablePanel } from '../ui/tables/ModelTablePanel';
 import { ImportSummaryDialog } from '../ui/dialogs/ImportSummaryDialog';
+import { ModelDiagnosticsDialog } from '../ui/dialogs/ModelDiagnosticsDialog';
+import type { ModelDiagnostic } from '../core/model/modelDiagnostics';
 import { useProjectStore } from '../state/projectStore';
 import { useViewStore } from '../state/viewStore';
 import { useSelectionStore } from '../state/selectionStore';
@@ -31,6 +33,7 @@ export const App: React.FC = () => {
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [initialGenerator, setInitialGenerator] = useState(false);
   const [tablesOpen, setTablesOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [pendingImportText, setPendingImportText] = useState<string | null>(null);
 
   const t = useT();
@@ -50,6 +53,17 @@ export const App: React.FC = () => {
   const resetModel = useProjectStore((s) => s.resetModel);
   const clearSelection = useSelectionStore((s) => s.clearSelection);
   const analysis = useAnalysisWorker();
+  const closeDiagnostics = useCallback(() => setDiagnosticsOpen(false), []);
+  const locateDiagnostic = useCallback((diagnostic: ModelDiagnostic) => {
+    useSelectionStore.setState({
+      selectedNodeIds: new Set(diagnostic.nodeIds),
+      selectedMemberIds: new Set(diagnostic.memberIds),
+    });
+    useViewStore.getState().setEditTool('select');
+    useViewStore.getState().setDisplayMode('model');
+    useSelectionStore.getState().focusSelection();
+    setDiagnosticsOpen(false);
+  }, []);
 
   // Apply theme to document
   useEffect(() => {
@@ -87,6 +101,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       const target = event.target as HTMLElement | null;
       if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
       if (event.key.toLowerCase() !== 'z') return;
@@ -226,7 +241,7 @@ export const App: React.FC = () => {
         </div>
       </div>
       <div className="main-area">
-        <Toolbar onRunAnalysis={analysis.run} onCancelAnalysis={analysis.cancel} isAnalyzing={isAnalyzing} onOpenGenerator={() => { setInitialGenerator(false); setGeneratorOpen(true); }} onOpenTables={() => setTablesOpen(true)} />
+        <Toolbar onRunAnalysis={analysis.run} onCancelAnalysis={analysis.cancel} isAnalyzing={isAnalyzing} onOpenGenerator={() => { setInitialGenerator(false); setGeneratorOpen(true); }} onOpenTables={() => setTablesOpen(true)} onOpenDiagnostics={() => setDiagnosticsOpen(true)} />
         <div className="center-area">
           <CanvasPanel />
           <ResultsPanel />
@@ -236,6 +251,7 @@ export const App: React.FC = () => {
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
       <ModelGeneratorDialog open={generatorOpen} initial={initialGenerator} onClose={() => { setGeneratorOpen(false); setInitialGenerator(false); }} />
       <ModelTablePanel open={tablesOpen} onClose={() => setTablesOpen(false)} />
+      {diagnosticsOpen && <ModelDiagnosticsDialog model={model} onClose={closeDiagnostics} onSelect={locateDiagnostic} />}
       <ImportSummaryDialog
         report={lastImportReport}
         {...(pendingImportText ? { onSelectLoadCase: (index: number) => { importFrameJson(pendingImportText, index); } } : {})}
