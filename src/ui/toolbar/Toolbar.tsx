@@ -33,9 +33,10 @@ interface ToolbarProps {
   isAnalyzing: boolean;
   onOpenGenerator: () => void;
   onOpenTables: () => void;
+  onOpenDiagnostics: () => void;
 }
 
-export const Toolbar: React.FC<ToolbarProps> = ({ onRunAnalysis, onCancelAnalysis, isAnalyzing, onOpenGenerator, onOpenTables }) => {
+export const Toolbar: React.FC<ToolbarProps> = ({ onRunAnalysis, onCancelAnalysis, isAnalyzing, onOpenGenerator, onOpenTables, onOpenDiagnostics }) => {
   const editTool = useViewStore((s) => s.editTool);
   const setEditTool = useViewStore((s) => s.setEditTool);
   const displayMode = useViewStore((s) => s.displayMode);
@@ -85,6 +86,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onRunAnalysis, onCancelAnalysi
 
       <div className="toolbar-section toolbar-analysis">
         <div className="toolbar-title">{t('toolbar.analysis')}</div>
+        <button className="toolbar-btn" onClick={onOpenDiagnostics}>
+          <span className="toolbar-label">{t('diagnostics.title')}</span>
+        </button>
         <button className={`toolbar-btn ${isAnalyzing ? 'cancel-btn' : 'run-btn'}`} onClick={isAnalyzing ? onCancelAnalysis : () => onRunAnalysis('static')}>
           {isAnalyzing ? `■ ${t('results.analyzing')}` : `\u25B6 ${t('toolbar.run')}`}
         </button>

@@ -21,7 +21,7 @@ import {
   findMembersWithUnsupportedTorsionRestraint,
   formatUnsupportedTorsionRestraintMessage,
 } from './torsionRestraint';
-import { findCouplingIssues } from './couplings';
+import { findCouplingIssues, isActiveNodeCoupling } from './couplings';
 import { memberLabel, nodeLabel } from './displayNumbers';
 import { DOF_NAMES, dofValues } from './restraints';
 
@@ -214,19 +214,19 @@ function validateUniqueIds({ model, errors }: ValidationContext): void {
   const idGroups: Array<{
     label: string;
     items: readonly { id: string }[];
-    location: 'node' | 'element';
+    location?: 'node' | 'element';
   }> = [
     { label: '節点', items: model.nodes, location: 'node' },
     { label: '部材', items: model.members, location: 'element' },
-    { label: '材料', items: model.materials, location: 'element' },
-    { label: '断面', items: model.sections, location: 'element' },
-    { label: 'バネ', items: model.springs ?? [], location: 'element' },
-    { label: '節点バネ', items: model.nodeSprings ?? [], location: 'element' },
-    { label: '節点荷重', items: model.nodalLoads, location: 'element' },
-    { label: '部材荷重', items: model.memberLoads, location: 'element' },
-    { label: 'カップリング', items: model.couplings ?? [], location: 'element' },
-    { label: '強制変位', items: model.prescribedDisplacements ?? [], location: 'element' },
-    { label: '節点質量', items: model.nodeMasses ?? [], location: 'element' },
+    { label: '材料', items: model.materials },
+    { label: '断面', items: model.sections },
+    { label: 'バネ', items: model.springs ?? [] },
+    { label: '節点バネ', items: model.nodeSprings ?? [] },
+    { label: '節点荷重', items: model.nodalLoads },
+    { label: '部材荷重', items: model.memberLoads },
+    { label: 'カップリング', items: model.couplings ?? [] },
+    { label: '強制変位', items: model.prescribedDisplacements ?? [] },
+    { label: '節点質量', items: model.nodeMasses ?? [] },
   ];
   for (const group of idGroups) {
     for (const duplicateId of findDuplicateIds(group.items)) {
@@ -235,7 +235,7 @@ function validateUniqueIds({ model, errors }: ValidationContext): void {
         message: `${group.label} ID "${duplicateId}" が重複しています。`,
       };
       if (group.location === 'node') error.nodeId = duplicateId;
-      else error.elementId = duplicateId;
+      else if (group.location === 'element') error.elementId = duplicateId;
       errors.push(error);
     }
   }
@@ -267,28 +267,24 @@ function validateMaterials({ model, errors }: ValidationContext): void {
       errors.push({
         type: 'validation',
         message: `材料 "${mat.name}" のヤング係数 E が正でありません (E=${mat.E})。`,
-        elementId: mat.id,
       });
     }
     if (!Number.isFinite(mat.G) || mat.G <= 0) {
       errors.push({
         type: 'validation',
         message: `材料 "${mat.name}" のせん断弾性係数 G が正でありません (G=${mat.G})。`,
-        elementId: mat.id,
       });
     }
     if (!Number.isFinite(mat.expansion)) {
       errors.push({
         type: 'validation',
         message: `材料 "${mat.name}" の線膨張係数が有限値ではありません (expansion=${mat.expansion})。`,
-        elementId: mat.id,
       });
     }
     if (mat.density !== undefined && (!Number.isFinite(mat.density) || mat.density < 0)) {
       errors.push({
         type: 'validation',
         message: `材料 "${mat.name}" の密度が有限な非負値ではありません (density=${mat.density})。`,
-        elementId: mat.id,
       });
     }
   }
@@ -306,28 +302,24 @@ function validateSections({ model, errors }: ValidationContext): void {
       errors.push({
         type: 'validation',
         message: `断面 "${sec.name}" の断面積 A が正でありません (A=${sec.A})。`,
-        elementId: sec.id,
       });
     }
     if (!Number.isFinite(sec.Ix) || sec.Ix < 0) {
       errors.push({
         type: 'validation',
         message: `断面 "${sec.name}" のねじり定数 Ix が有限な非負値ではありません (Ix=${sec.Ix})。`,
-        elementId: sec.id,
       });
     }
     if (!Number.isFinite(sec.Iy) || sec.Iy <= 0) {
       errors.push({
         type: 'validation',
         message: `断面 "${sec.name}" の断面二次モーメント Iy が正でありません (Iy=${sec.Iy})。`,
-        elementId: sec.id,
       });
     }
     if (!Number.isFinite(sec.Iz) || sec.Iz <= 0) {
       errors.push({
         type: 'validation',
         message: `断面 "${sec.name}" の断面二次モーメント Iz が正でありません (Iz=${sec.Iz})。`,
-        elementId: sec.id,
       });
     }
     for (const shearRatio of ['ky', 'kz'] as const) {
@@ -335,7 +327,6 @@ function validateSections({ model, errors }: ValidationContext): void {
         errors.push({
           type: 'validation',
           message: `断面 "${sec.name}" のせん断面積比 ${shearRatio} が有限な非負値ではありません (${shearRatio}=${sec[shearRatio]})。`,
-          elementId: sec.id,
         });
       }
     }
@@ -350,14 +341,12 @@ function validateSprings({ model, errors }: ValidationContext): Set<number> {
       errors.push({
         type: 'validation',
         message: `バネ ${spring.id} の番号が非負整数ではありません (number=${spring.number})。`,
-        elementId: spring.id,
       });
     }
     if (springNumbers.has(spring.number)) {
       errors.push({
         type: 'validation',
         message: `バネ番号 ${spring.number} が重複しています。`,
-        elementId: spring.id,
       });
     }
     springNumbers.add(spring.number);
@@ -365,7 +354,6 @@ function validateSprings({ model, errors }: ValidationContext): Set<number> {
       errors.push({
         type: 'validation',
         message: `バネ ${spring.id} の回転剛性 kTheta が有限な非負値ではありません (kTheta=${spring.kTheta})。`,
-        elementId: spring.id,
       });
     }
   }
@@ -401,7 +389,7 @@ function validateNodeSprings(context: ValidationContext): void {
       errors.push({
         type: 'validation',
         message: `節点バネ ${spring.id} の剛性成分 (${invalid.join(', ')}) が有限な非負値ではありません。`,
-        elementId: spring.id,
+        nodeId: spring.nodeId,
       });
     }
   }
@@ -409,12 +397,10 @@ function validateNodeSprings(context: ValidationContext): void {
 
 function validateCouplingsAndTorsionRestraints({ model, errors }: ValidationContext): void {
   for (const issue of findCouplingIssues(model)) {
-    const error: AnalysisError = {
+    errors.push({
       type: 'validation',
       message: issue.message,
-    };
-    if (issue.couplingId) error.elementId = issue.couplingId;
-    errors.push(error);
+    });
   }
   for (const member of findMembersWithUnsupportedTorsionRestraint(model)) {
     errors.push({
@@ -521,7 +507,7 @@ function validateSupportSufficiency({ model, errors, analysisMode }: ValidationC
   }
 }
 
-function validateIsolatedNodes({ model, errors }: ValidationContext): void {
+function validateIsolatedNodes({ model, errors, analysisMode, nodeById }: ValidationContext): void {
   const connectedNodes = new Set<string>();
   for (const m of model.members) {
     connectedNodes.add(m.ni);
@@ -532,8 +518,16 @@ function validateIsolatedNodes({ model, errors }: ValidationContext): void {
       connectedNodes.add(spring.nodeId);
     }
   }
+  const nodeIds = new Set(nodeById.keys());
+  for (const coupling of model.couplings ?? []) {
+    if (isActiveNodeCoupling(coupling, nodeIds)) {
+      connectedNodes.add(coupling.masterNodeId);
+      connectedNodes.add(coupling.slaveNodeId);
+    }
+  }
   for (const n of model.nodes) {
-    if (!connectedNodes.has(n.id) && model.members.length > 0) {
+    const fullyRestrained = dofValues(getEffectiveRestraint(n.restraint, analysisMode)).every(Boolean);
+    if (!connectedNodes.has(n.id) && !fullyRestrained && model.members.length > 0) {
       errors.push({
         type: 'validation',
         message: `節点 ${nodeLabel(n)} はどの部材にも接続されていません（孤立節点）。`,

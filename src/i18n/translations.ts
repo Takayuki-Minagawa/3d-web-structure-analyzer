@@ -17,6 +17,20 @@ const ja = {
   'app.workerCrash': '解析ワーカーが予期せず停止しました。',
   'app.help': 'ヘルプ',
 
+  'diagnostics.title': 'モデル診断',
+  'diagnostics.note': '入力エラーと接続状態を確認します。注意項目は意図したモデルでも表示されます。自動修正は行いません。問題がなくても構造の安定性を保証するものではありません。',
+  'diagnostics.errors': 'エラー',
+  'diagnostics.warnings': '注意',
+  'diagnostics.error': '入力エラー',
+  'diagnostics.warning': '要確認',
+  'diagnostics.noIssues': '入力・接続チェックで問題は見つかりませんでした。',
+  'diagnostics.locate': '該当箇所を選択・表示',
+  'diagnostics.coincidentNodes': '同一座標に複数の節点があります。座標が同じでも別の節点として扱われます。接続の意図を確認してください。',
+  'diagnostics.duplicateMembers': '同じ節点対を結ぶ部材が複数あります。剛性や自重が重複するため、意図した配置か確認してください。',
+  'diagnostics.isolatedNodes': '部材や有効なカップリングに接続していない節点があります。支持条件・ばねを含め、必要な節点か確認してください。',
+  'diagnostics.disconnectedComponents': 'この部分は他の部材群と接続していません。各部分の支持条件と接続の意図を確認してください。',
+  'help.analysis.diagnostics': '「モデル診断」で入力エラー・節点や部材の重複・孤立・接続状態を確認し、該当箇所を選択表示',
+
   // Theme
   'theme.light': 'ライト',
   'theme.dark': 'ダーク',
@@ -437,6 +451,19 @@ const ja = {
 } as const;
 
 const en: Record<keyof typeof ja, string> = {
+  'diagnostics.title': 'Model check',
+  'diagnostics.note': 'Checks input and connectivity. Warnings may describe intentional modeling choices. No automatic changes are made. A clear check does not guarantee structural stability.',
+  'diagnostics.errors': 'Errors',
+  'diagnostics.warnings': 'Warnings',
+  'diagnostics.error': 'Input error',
+  'diagnostics.warning': 'Review',
+  'diagnostics.noIssues': 'No input or connectivity issues were found.',
+  'diagnostics.locate': 'Select and show entities',
+  'diagnostics.coincidentNodes': 'Multiple nodes have exactly the same coordinates. They remain separate nodes; check whether this connection is intentional.',
+  'diagnostics.duplicateMembers': 'Multiple members join the same pair of nodes. Their stiffness and any self-weight loads accumulate; check whether this is intentional.',
+  'diagnostics.isolatedNodes': 'These nodes have no member or active coupling connections. Check whether they are needed, including their supports and springs.',
+  'diagnostics.disconnectedComponents': 'This part is disconnected from other member groups. Check each part’s supports and intended connectivity.',
+  'help.analysis.diagnostics': 'Use "Model check" to find input errors, coincident nodes, duplicate members and disconnected parts, then select and show the affected entities',
   'app.title': '3D Frame Analyzer',
   'app.loadSample': 'Load Sample',
   'app.import': 'Import JSON',

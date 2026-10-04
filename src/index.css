@@ -815,6 +815,18 @@ input[type="range"] {
   flex: 1;
 }
 
+.model-diagnostics { width: 680px; }
+.diagnostics-note { line-height: 1.6; margin: 0 0 12px; }
+.diagnostics-summary { font-weight: 600; margin-bottom: 12px; }
+.model-diagnostics .diagnostics-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.model-diagnostics .diagnostic-item { border: 1px solid var(--border); border-left: 3px solid var(--warning); border-radius: 4px; padding: 12px; }
+.model-diagnostics .diagnostic-error { border-left-color: var(--danger); }
+.model-diagnostics .diagnostic-item > strong { color: var(--warning); }
+.model-diagnostics .diagnostic-error > strong { color: var(--danger); }
+.model-diagnostics .diagnostic-item p { margin: 6px 0; line-height: 1.5; overflow-wrap: anywhere; }
+.diagnostic-entities { font-size: 11px; }
+.model-diagnostics .diagnostic-item button { padding: 5px 10px; background: var(--bg-surface); color: var(--accent); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+
 .help-section {
   margin-bottom: 16px;
 }

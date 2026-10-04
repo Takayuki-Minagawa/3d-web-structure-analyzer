@@ -48,6 +48,7 @@ export const HelpDialog: React.FC<Props> = ({ open, onClose }) => {
       title: t('help.section.analysis'),
       items: [
         t('help.analysis.run'),
+        t('help.analysis.diagnostics'),
         t('help.analysis.modal'),
         t('help.analysis.buckling'),
         t('help.analysis.subdivision'),
