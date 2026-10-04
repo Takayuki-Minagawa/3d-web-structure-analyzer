@@ -222,3 +222,116 @@ describe('isolated-node validation and analysis', () => {
       .toBe(true);
   });
 });
+
+describe('diagnostic selection locations', () => {
+  const invalidNonMemberEntities: Array<[string, (model: ProjectModel) => void]> = [
+    ['material', (model) => {
+      model.materials.push({
+        ...model.materials[0]!, id: 'beam', name: 'Unused invalid material',
+        E: 0, G: 0, expansion: NaN, density: -1,
+      });
+    }],
+    ['section', (model) => {
+      model.sections.push({
+        ...model.sections[0]!, id: 'beam', name: 'Unused invalid section',
+        A: 0, Ix: -1, Iy: 0, Iz: 0, ky: -1, kz: -1,
+      });
+    }],
+    ['spring', (model) => {
+      model.springs = [
+        { id: 'beam', number: -1, method: 0, kTheta: -1 },
+        { id: 'other', number: -1, method: 0, kTheta: 1 },
+      ];
+    }],
+    ['coupling', (model) => {
+      model.couplings = [{ ...coupling('base', 'base'), id: 'beam' }];
+    }],
+  ];
+
+  it.each(invalidNonMemberEntities)(
+    'does not select an unrelated member with the same ID as an invalid %s',
+    (_, configure) => {
+      const model = cantilever();
+      configure(model);
+      const errors = diagnoseModel(model).filter((diagnostic) => diagnostic.code === 'validation');
+
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors.every((error) => error.memberIds.length === 0 && error.nodeIds.length === 0)).toBe(true);
+      expect(errors.every((error) => Boolean(error.message))).toBe(true);
+    }
+  );
+
+  const duplicateEntityGroups: Array<[string, (model: ProjectModel) => void]> = [
+    ['material', (model) => {
+      model.materials.push(...Array.from({ length: 2 }, () => ({ ...model.materials[0]!, id: 'beam' })));
+    }],
+    ['section', (model) => {
+      model.sections.push(...Array.from({ length: 2 }, () => ({ ...model.sections[0]!, id: 'beam' })));
+    }],
+    ['spring', (model) => {
+      model.springs = [3, 4].map((number) => ({ id: 'beam', number, method: 0, kTheta: 1 }));
+    }],
+    ['nodal spring', (model) => {
+      model.nodeSprings = Array.from({ length: 2 }, () => ({
+        id: 'beam', nodeId: 'base', ux: 0, uy: 0, uz: 0, rx: 0, ry: 0, rz: 0,
+      }));
+    }],
+    ['nodal load', (model) => {
+      model.nodalLoads = Array.from({ length: 2 }, () => ({
+        id: 'beam', nodeId: 'tip', fx: 0, fy: 1, fz: 0, mx: 0, my: 0, mz: 0,
+      }));
+    }],
+    ['member load', (model) => {
+      model.memberLoads = Array.from({ length: 2 }, () => ({
+        id: 'beam', memberId: 'beam', type: 'udl', direction: 'localY', value: 1,
+      }));
+    }],
+    ['coupling', (model) => {
+      model.couplings = Array.from({ length: 2 }, () => ({
+        ...coupling('base', 'tip'), ...FREE_RESTRAINT, id: 'beam',
+      }));
+    }],
+    ['prescribed displacement', (model) => {
+      model.prescribedDisplacements = Array.from({ length: 2 }, () => ({
+        id: 'beam', nodeId: 'base', ux: 0, uy: 0, uz: 0, rx: 0, ry: 0, rz: 0,
+      }));
+    }],
+    ['nodal mass', (model) => {
+      model.nodeMasses = Array.from({ length: 2 }, () => ({ id: 'beam', nodeId: 'tip', mass: 1 }));
+    }],
+  ];
+
+  it.each(duplicateEntityGroups)(
+    'does not treat a duplicate %s ID as a member ID',
+    (_, configure) => {
+      const model = cantilever();
+      configure(model);
+      const errors = diagnoseModel(model).filter((diagnostic) => diagnostic.code === 'validation');
+
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ nodeIds: [], memberIds: [] });
+      expect(errors[0]!.message).toContain('ID "beam" が重複');
+    }
+  );
+
+  it('selects the node targeted by an invalid nodal spring, never its matching member ID', () => {
+    const model = cantilever();
+    model.nodeSprings = [{ id: 'beam', nodeId: 'tip', ux: -1, uy: 0, uz: 0, rx: 0, ry: 0, rz: 0 }];
+
+    expect(diagnoseModel(model)).toEqual([expect.objectContaining({
+      code: 'validation', nodeIds: ['tip'], memberIds: [],
+    })]);
+  });
+
+  it('continues locating errors and duplicate IDs belonging to actual members and nodes', () => {
+    const model = cantilever();
+    model.members[0]!.codeAngle = NaN;
+    model.members.push({ ...model.members[0]! });
+    model.nodes.push({ ...model.nodes[0]! });
+    const errors = diagnoseModel(model).filter((diagnostic) => diagnostic.code === 'validation');
+
+    expect(errors.find((error) => error.message?.includes('コード角'))?.memberIds).toEqual(['beam']);
+    expect(errors.find((error) => error.message?.includes('部材 ID'))?.memberIds).toEqual(['beam']);
+    expect(errors.find((error) => error.message?.includes('節点 ID'))?.nodeIds).toEqual(['base']);
+  });
+});

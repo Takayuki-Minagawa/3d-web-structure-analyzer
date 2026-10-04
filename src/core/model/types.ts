@@ -499,7 +499,9 @@ export interface StabilityDiagnostic {
 export interface AnalysisError {
   type: 'validation' | 'singular' | 'numerical';
   message: string;
-  elementId?: string;
-  nodeId?: string;
+  /** Selectable member ID only; never a material, section, spring, coupling, or load ID. */
+  elementId?: MemberId;
+  /** Selectable node ID, including the target of a nodal load or support. */
+  nodeId?: NodeId;
   diagnostics?: StabilityDiagnostic[];
 }
