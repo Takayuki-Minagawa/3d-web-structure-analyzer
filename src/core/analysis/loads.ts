@@ -47,8 +47,10 @@ export function integrateGauss3(a: number, b: number, f: (x: number) => number):
   const half = (b - a) / 2;
   const mid = (a + b) / 2;
   let sum = 0;
-  for (const [point, weight] of GAUSS_3) sum += weight * f(mid + half * point);
-  return sum * half;
+  // Include the interval scale before summing: the unscaled weights sum to 2
+  // and can overflow for a finite integrand even when its integral is finite.
+  for (const [point, weight] of GAUSS_3) sum += (half * weight) * f(mid + half * point);
+  return sum;
 }
 
 export function groupMemberLoadsByMember(

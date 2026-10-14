@@ -4,6 +4,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": { "node": ">=22.12.0" },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -25,14 +26,14 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/three": "^0.183.1",
-    "@vitejs/plugin-react": "^4.3.3",
+    "@vitejs/plugin-react": "^5.2.0",
     "eslint": "^9.13.0",
     "eslint-plugin-react-hooks": "^5.0.0",
     "eslint-plugin-react-refresh": "^0.4.14",
     "globals": "^15.11.0",
     "typescript": "~5.6.2",
     "typescript-eslint": "^8.11.0",
-    "vite": "^5.4.10",
-    "vitest": "^1.6.1"
+    "vite": "^7.3.7",
+    "vitest": "^4.1.11"
   }
 }

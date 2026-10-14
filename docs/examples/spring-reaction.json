@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 2,
+  "savedAt": "2026-10-14T00:00:00.000Z",
+  "model": {
+    "title": "支点ばね反力の確認（Fx=10 kN、反力 -5/-5 kN）",
+    "analysisMode": "3d",
+    "nodes": [
+      {
+        "id": "fixed",
+        "number": 1,
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "restraint": {
+          "ux": true,
+          "uy": true,
+          "uz": true,
+          "rx": true,
+          "ry": true,
+          "rz": true
+        }
+      },
+      {
+        "id": "master",
+        "number": 2,
+        "x": 4,
+        "y": 0,
+        "z": 0,
+        "restraint": {
+          "ux": false,
+          "uy": true,
+          "uz": true,
+          "rx": true,
+          "ry": true,
+          "rz": true
+        }
+      }
+    ],
+    "materials": [
+      {
+        "id": "mat",
+        "name": "Steel",
+        "E": 200000000.0,
+        "G": 80000000.0,
+        "nu": 0.25,
+        "expansion": 1e-05,
+        "density": 7.85
+      }
+    ],
+    "sections": [
+      {
+        "id": "sec",
+        "name": "Axial bar",
+        "materialId": "mat",
+        "A": 0.01,
+        "Ix": 1e-05,
+        "Iy": 1e-05,
+        "Iz": 1e-05,
+        "ky": 0,
+        "kz": 0
+      }
+    ],
+    "springs": [],
+    "members": [
+      {
+        "id": "bar",
+        "number": 1,
+        "ni": "fixed",
+        "nj": "master",
+        "sectionId": "sec",
+        "codeAngle": 0,
+        "iSprings": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "jSprings": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "torsionRestraint": "none"
+      }
+    ],
+    "couplings": [],
+    "nodeSprings": [
+      {
+        "id": "spring",
+        "nodeId": "master",
+        "ux": 500000,
+        "uy": 0,
+        "uz": 0,
+        "rx": 0,
+        "ry": 0,
+        "rz": 0
+      }
+    ],
+    "loadCases": [
+      {
+        "id": "positive",
+        "name": "Fx +10 kN"
+      },
+      {
+        "id": "negative",
+        "name": "Fx -4 kN"
+      }
+    ],
+    "loadCombinations": [],
+    "activeLoadCaseId": "positive",
+    "activeLoadCombinationId": null,
+    "nodalLoads": [
+      {
+        "id": "plus",
+        "nodeId": "master",
+        "loadCaseId": "positive",
+        "fx": 10,
+        "fy": 0,
+        "fz": 0,
+        "mx": 0,
+        "my": 0,
+        "mz": 0
+      },
+      {
+        "id": "minus",
+        "nodeId": "master",
+        "loadCaseId": "negative",
+        "fx": -4,
+        "fy": 0,
+        "fz": 0,
+        "mx": 0,
+        "my": 0,
+        "mz": 0
+      }
+    ],
+    "memberLoads": [],
+    "prescribedDisplacements": [],
+    "nodeMasses": [],
+    "gravity": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "units": {
+      "force": "kN",
+      "length": "m",
+      "moment": "kN·m"
+    }
+  }
+}

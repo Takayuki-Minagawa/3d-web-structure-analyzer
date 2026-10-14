@@ -10,10 +10,14 @@ import {
   NODE_COLOR_SELECTED,
   NODE_POINT_SIZE,
   SUPPORT_COLOR,
-  SUPPORT_OPACITY,
-  SUPPORT_SIZE,
 } from './constants';
 import { getThreeLocalAxes } from './localGeometry';
+import { resolveViewportLoads } from './loadPresentation';
+import { getSupportPresentations } from './supportPresentation';
+
+/** Absolute threshold in each load component's current project unit. */
+export const LOAD_DISPLAY_TOLERANCE = 1e-10;
+const isVisibleLoad = (value: number) => Number.isFinite(value) && Math.abs(value) > LOAD_DISPLAY_TOLERANCE;
 
 export interface GeometryHighlightState {
   selectedNodeIds: ReadonlySet<string>;
@@ -80,25 +84,36 @@ export function populateMembers(
 }
 
 export function populateSupports(group: THREE.Group, model: ProjectModel): void {
-  for (const node of model.nodes) {
-    const restraint = node.restraint;
-    if (!restraint.ux && !restraint.uy && !restraint.uz) continue;
-
-    const size = SUPPORT_SIZE;
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute([
-      node.x, node.y, node.z - size,
-      node.x - size * 0.7, node.y, node.z - size * 2,
-      node.x + size * 0.7, node.y, node.z - size * 2,
-    ], 3));
-    geometry.setIndex([0, 1, 2]);
-    const material = new THREE.MeshBasicMaterial({
-      color: SUPPORT_COLOR,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: SUPPORT_OPACITY,
-    });
-    group.add(new THREE.Mesh(geometry, material));
+  for (const support of getSupportPresentations(model)) {
+    // Local coordinates are CSS pixels, scaled and billboarded by ThreeApp.
+    const marker = new THREE.Group();
+    marker.position.set(support.node.x, support.node.y, support.node.z);
+    marker.userData.support = support;
+    const color = support.explicit.length || support.torsion.length ? SUPPORT_COLOR : 0x78909c;
+    const line = (points: number[][], lineColor = color) => {
+      const geometry = new THREE.BufferGeometry().setFromPoints(points.map(([x, y]) => new THREE.Vector3(x, y, 0)));
+      marker.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: lineColor, depthTest: false })));
+    };
+    const circle = (cx: number, cy: number, radius: number) => line(Array.from({ length: 25 }, (_, i) => {
+      const angle = i / 24 * 2 * Math.PI;
+      return [cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)];
+    }));
+    if (support.translationCount === 3 && support.rotationCount === 3) {
+      line([[-7, -7], [7, -7], [7, -19], [-7, -19], [-7, -7]]);
+    } else if (support.translationCount > 0) {
+      line([[0, -5], [-8, -17], [8, -17], [0, -5]]);
+      if (support.translationCount === 1) {
+        circle(-4, -20, 2);
+        circle(4, -20, 2);
+      }
+    }
+    if (support.rotationCount > 0 && !(support.translationCount === 3 && support.rotationCount === 3)) {
+      circle(0, support.translationCount > 0 ? -12 : -11, 5);
+    }
+    if (support.springs.length) {
+      line([[9, -5], [13, -7], [9, -10], [13, -13], [9, -16], [13, -19], [9, -22]], 0xcc66cc);
+    }
+    group.add(marker);
   }
 }
 
@@ -126,7 +141,7 @@ function addMomentSymbol(
   headWidth: number,
   armLength = arrowLength * 0.5,
 ): void {
-  if (Math.abs(value) < 1e-10) return;
+  if (!isVisibleLoad(value)) return;
   const axisDirection = axis.clone().normalize();
   const reference = Math.abs(axisDirection.z) > 0.9
     ? new THREE.Vector3(1, 0, 0)
@@ -157,7 +172,8 @@ function addMomentSymbol(
   );
 }
 
-export function populateLoads(group: THREE.Group, model: ProjectModel): void {
+export function populateLoads(group: THREE.Group, sourceModel: ProjectModel, options: { resolved?: boolean } = {}): void {
+  const model = options.resolved ? sourceModel : resolveViewportLoads(sourceModel, { kind: 'editing' }).model!;
   const forceColor = 0xff4444;
   const momentColor = 0xee8800;
   const arrowLength = 15;
@@ -175,7 +191,7 @@ export function populateLoads(group: THREE.Group, model: ProjectModel): void {
       [load.fz, new THREE.Vector3(0, 0, 1)],
     ];
     for (const [value, direction] of forces) {
-      if (Math.abs(value) < 1e-10) continue;
+      if (!isVisibleLoad(value)) continue;
       addArrow(
         group,
         origin,
@@ -227,6 +243,7 @@ export function populateLoads(group: THREE.Group, model: ProjectModel): void {
     };
 
     if (load.type === 'udl') {
+      if (!isVisibleLoad(load.value)) continue;
       const direction = localDirection(load.direction).multiplyScalar(load.value > 0 ? 1 : -1);
       const segmentCount = 5;
       for (let index = 0; index <= segmentCount; index += 1) {
@@ -236,12 +253,12 @@ export function populateLoads(group: THREE.Group, model: ProjectModel): void {
     } else if (load.type === 'trapezoid') {
       // Arrow length follows the local intensity so the load shape is visible.
       const peak = Math.max(Math.abs(load.value), Math.abs(load.valueEnd));
-      if (peak < 1e-12 || axes.length <= 0) continue;
+      if (!isVisibleLoad(peak) || axes.length <= 0) continue;
       const segmentCount = 5;
       for (let index = 0; index <= segmentCount; index += 1) {
         const ratio = index / segmentCount;
         const intensity = load.value + (load.valueEnd - load.value) * ratio;
-        if (Math.abs(intensity) < peak * 1e-6) continue;
+        if (!isVisibleLoad(intensity)) continue;
         const position = pointI.clone().lerp(pointJ, (load.a + (load.b - load.a) * ratio) / axes.length);
         const direction = localDirection(load.direction).multiplyScalar(intensity > 0 ? 1 : -1);
         const scaledLength = arrowLength * 0.6 * Math.abs(intensity) / peak;
@@ -251,6 +268,7 @@ export function populateLoads(group: THREE.Group, model: ProjectModel): void {
         );
       }
     } else if (load.type === 'point') {
+      if (!isVisibleLoad(load.value)) continue;
       const t = axes.length > 0 ? load.a / axes.length : 0;
       const position = pointI.clone().lerp(pointJ, t);
       const direction = localDirection(load.direction).multiplyScalar(load.value > 0 ? 1 : -1);
@@ -261,9 +279,9 @@ export function populateLoads(group: THREE.Group, model: ProjectModel): void {
         [pointJ, [load.jQx, load.jQy, load.jQz]],
       ];
       for (const [position, [qx, qy, qz]] of endForces) {
-        if (Math.abs(qx) > 1e-10) addArrow(group, position, axes.x.clone().multiplyScalar(qx > 0 ? 1 : -1), arrowLength * 0.5, forceColor, headLength, headWidth);
-        if (Math.abs(qy) > 1e-10) addArrow(group, position, axes.y.clone().multiplyScalar(qy > 0 ? 1 : -1), arrowLength * 0.5, forceColor, headLength, headWidth);
-        if (Math.abs(qz) > 1e-10) addArrow(group, position, axes.z.clone().multiplyScalar(qz > 0 ? 1 : -1), arrowLength * 0.5, forceColor, headLength, headWidth);
+        if (isVisibleLoad(qx)) addArrow(group, position, axes.x.clone().multiplyScalar(qx > 0 ? 1 : -1), arrowLength * 0.5, forceColor, headLength, headWidth);
+        if (isVisibleLoad(qy)) addArrow(group, position, axes.y.clone().multiplyScalar(qy > 0 ? 1 : -1), arrowLength * 0.5, forceColor, headLength, headWidth);
+        if (isVisibleLoad(qz)) addArrow(group, position, axes.z.clone().multiplyScalar(qz > 0 ? 1 : -1), arrowLength * 0.5, forceColor, headLength, headWidth);
       }
 
       const midpoint = pointI.clone().lerp(pointJ, 0.5);
@@ -289,13 +307,17 @@ export function populateLoads(group: THREE.Group, model: ProjectModel): void {
         );
       }
     } else if (load.type === 'temperature') {
+      if (!isVisibleLoad(load.value)) continue;
       const sign = load.value >= 0 ? 1 : -1;
       addArrow(group, pointI, axes.x.clone().multiplyScalar(-sign), arrowLength * 0.7, momentColor, headLength, headWidth);
       addArrow(group, pointJ, axes.x.clone().multiplyScalar(sign), arrowLength * 0.7, momentColor, headLength, headWidth);
     } else {
-      const gravity = model.gravity ?? { x: 0, y: 0, z: -1 };
+      const gravity = model.gravity ?? { x: 0, y: 0, z: 0 };
       const gravityDirection = new THREE.Vector3(gravity.x, gravity.y, gravity.z);
-      if (gravityDirection.lengthSq() <= 1e-12 || Math.abs(load.value) < 1e-12) continue;
+      const section = model.sections.find((item) => item.id === member.sectionId);
+      const material = model.materials.find((item) => item.id === section?.materialId);
+      const intensity = gravityDirection.length() * load.value * (material?.density ?? 0) * (section?.A ?? 0);
+      if (!isVisibleLoad(intensity)) continue;
       gravityDirection.normalize().multiplyScalar(load.value >= 0 ? 1 : -1);
       const segmentCount = 5;
       for (let index = 0; index <= segmentCount; index += 1) {

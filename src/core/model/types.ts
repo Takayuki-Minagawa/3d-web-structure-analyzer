@@ -394,6 +394,8 @@ export interface AnalysisTarget {
 
 export interface AnalysisTargetResult extends AnalysisOutput {
   target: AnalysisTarget;
+  /** Physical node/DOF support forces; shared rigid reactions appear once. */
+  supportReactions?: Float64Array;
 }
 
 export interface ComponentEnvelope {
@@ -406,6 +408,8 @@ export interface ComponentEnvelope {
 export interface AnalysisEnvelope {
   displacements: ComponentEnvelope;
   reactions: ComponentEnvelope;
+  /** Enveloped after physical support recovery, including governing IDs. */
+  supportReactions?: ComponentEnvelope;
   elementEndForces: Map<MemberId, ComponentEnvelope>;
 }
 

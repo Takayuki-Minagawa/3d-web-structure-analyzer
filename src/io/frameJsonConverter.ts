@@ -168,6 +168,25 @@ export function convertFrameJsonWithReport(
   const materials: Material[] = doc.materials.map((material) => {
     const id = String(material.number);
     matNumberToId.set(material.number, id);
+    const nu = material.poisson ?? 0.3;
+    if (material.poisson === undefined) {
+      warnings.push({
+        code: 'defaulted-poisson-ratio',
+        message: `Material ${material.number}: omitted Poisson ratio was set to 0.3.`,
+        itemIds: [material.number], count: 1,
+      });
+    }
+    const G = material.shear > 0 ? material.shear : material.young / (2 * (1 + nu));
+    if (!Number.isFinite(G)) {
+      throw new Error(`Material ${material.number}: shear modulus calculated from E and Poisson ratio must be finite.`);
+    }
+    if (material.shear <= 0) {
+      warnings.push({
+        code: 'calculated-shear-modulus',
+        message: `Material ${material.number}: shear modulus ${material.shear} was replaced by E / (2 * (1 + nu)) = ${G} using nu=${nu}.`,
+        itemIds: [material.number], count: 1,
+      });
+    }
     return {
       id,
       name: normalizeName(
@@ -177,10 +196,8 @@ export function convertFrameJsonWithReport(
         normalizedNameIds
       ),
       E: material.young,
-      G: material.shear > 0
-        ? material.shear
-        : material.young / (2 * (1 + (material.poisson || 0.3))),
-      nu: material.poisson || 0.3,
+      G,
+      nu,
       expansion: material.expansion,
     };
   });

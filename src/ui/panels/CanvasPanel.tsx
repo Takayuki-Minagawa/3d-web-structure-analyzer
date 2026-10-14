@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { ThreeApp } from '../../rendering/threeApp';
 import type { EditAction } from '../../rendering/threeApp';
+import { resolveViewportLoads, type ViewportLoadSelection } from '../../rendering/loadPresentation';
 import { useProjectStore } from '../../state/projectStore';
 import { isForceDiagramMode, useViewStore } from '../../state/viewStore';
 import { modeShapeAsResult } from '../../state/analysisResults';
@@ -28,9 +29,12 @@ export const CanvasPanel: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<ThreeApp | null>(null);
   const [nodeCoordinates, setNodeCoordinates] = useState({ x: '0', y: '0', z: '0' });
+  const [showAllLoadCases, setShowAllLoadCases] = useState(false);
 
   const model = useProjectStore((s) => s.model);
   const analysisResult = useProjectStore((s) => s.analysisResult);
+  const analysisResults = useProjectStore((s) => s.analysisResults);
+  const analysisResultView = useProjectStore((s) => s.analysisResultView);
   const isResultStale = useProjectStore((s) => s.isResultStale);
   const modalResult = useProjectStore((s) => s.modalResult);
   const bucklingResult = useProjectStore((s) => s.bucklingResult);
@@ -202,7 +206,8 @@ export const CanvasPanel: React.FC = () => {
   }, [fitViewVersion]);
 
   // Results from before a model edit would be drawn on the wrong geometry.
-  const currentResult = isResultStale ? null : analysisResult;
+  // A component envelope has no single compatible deformation or force diagram.
+  const currentResult = isResultStale || analysisResultView?.kind === 'envelope' ? null : analysisResult;
   useEffect(() => {
     appRef.current?.setResult(currentResult);
   }, [currentResult]);
@@ -226,6 +231,38 @@ export const CanvasPanel: React.FC = () => {
   useEffect(() => {
     appRef.current?.setModeShape(modeShapeResult);
   }, [modeShapeResult]);
+
+  const loadPresentation = useMemo(() => {
+    let selection: ViewportLoadSelection = { kind: 'editing' };
+    let prefix = t('canvas.loadCaseEditing');
+    if (showAllLoadCases) {
+      selection = { kind: 'all' };
+      prefix = t('canvas.allLoadCasesWarning');
+    } else if (displayMode === 'modeShape' && selectedMode) {
+      if (shapeView?.kind === 'modal') return { model: null, caption: selectedMode.caption };
+      if (bucklingResult) {
+        selection = { kind: 'target', target: bucklingResult.target };
+        prefix = t('canvas.loadResultTarget');
+      }
+    } else if (displayMode !== 'model' && !isResultStale && analysisResultView) {
+      if (analysisResultView.kind === 'envelope') {
+        selection = analysisResultView;
+        prefix = t('canvas.envelopeLoads');
+      } else {
+        const target = analysisResults.find((item) => item.target.id === analysisResultView.targetId)?.target;
+        if (target) {
+          selection = { kind: 'target', target };
+          prefix = t('canvas.loadResultTarget');
+        }
+      }
+    }
+    const resolved = resolveViewportLoads(model, selection);
+    return { ...resolved, caption: `${prefix}: ${resolved.caption}` };
+  }, [model, showAllLoadCases, displayMode, isResultStale, analysisResultView, analysisResults, selectedMode, shapeView, bucklingResult, t]);
+
+  useEffect(() => {
+    appRef.current?.setLoadPresentation(loadPresentation);
+  }, [loadPresentation]);
 
   // Update display mode
   useEffect(() => {
@@ -354,6 +391,11 @@ export const CanvasPanel: React.FC = () => {
             <label><input type="checkbox" checked={showLoads} onChange={(event) => setShowLoads(event.target.checked)} />{t('prop.showLoads')}</label>
             <label><input type="checkbox" checked={showSupports} onChange={(event) => setShowSupports(event.target.checked)} />{t('prop.supports')}</label>
           </div>
+          <label className="canvas-palette-toggle">
+            <span>{t('canvas.allLoadCases')}</span>
+            <input type="checkbox" checked={showAllLoadCases} disabled={!showLoads} onChange={(event) => setShowAllLoadCases(event.target.checked)} />
+          </label>
+          {showSupports && <div className="muted">{t('canvas.supportLegend')}</div>}
           <label>
             {t('canvas.labelMode')}
             <select value={labelMode} onChange={(event) => setLabelMode(event.target.value as typeof labelMode)}>

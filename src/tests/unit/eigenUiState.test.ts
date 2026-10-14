@@ -244,7 +244,7 @@ describe('eigen results in reports', () => {
     const markdown = generateMarkdownReport({
       model, result: null, error: null, generatedAt: new Date('2026-01-01T00:00:00Z'),
     });
-    expect(markdown).toContain('Trapezoid localZ w1=1.000000 w2=2.000000 from a=0.500000 to b=2.500000');
+    expect(markdown).toContain('Trapezoid localZ w1=1.000000 w2=2.000000 [kN/m] from a=0.500000 to b=2.500000 [m]');
     expect(markdown).toContain('## Input — Prescribed Displacements');
     expect(markdown).toContain('| N1 | Dead | 0 | 0 | -0.010000 |');
     expect(markdown).toContain('## Input — Nodal Masses');
@@ -312,7 +312,7 @@ describe('trapezoidal loads in the table clipboard', () => {
       direction: 'globalX', value: -1.5, valueEnd: -4, a: 0.25, b: 2.75,
     }];
     const tsv = exportModelTable(model, 'memberLoads');
-    expect(tsv.split('\n')[1]).toBe('1\tDead\ttrapezoid\tglobalX\t-1.5\t0.25\t-4\t2.75');
+    expect(tsv.split('\n')[1]).toBe('1\tdead\tDead\ttrapezoid\tglobalX\t-1.5\t0.25\t-4\t2.75');
 
     const imported = importModelTable({ ...model, memberLoads: [] }, 'memberLoads', tsv);
     expect(imported.imported).toBe(1);

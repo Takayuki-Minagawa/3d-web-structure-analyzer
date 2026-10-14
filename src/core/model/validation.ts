@@ -24,6 +24,7 @@ import {
 import { findCouplingIssues, isActiveNodeCoupling } from './couplings';
 import { memberLabel, nodeLabel } from './displayNumbers';
 import { DOF_NAMES, dofValues } from './restraints';
+import { validateLoadReferences } from './loadCases';
 
 const RELATIVE_LOAD_TOLERANCE = 1e-12;
 /** Relative slack for load positions compared against computed member lengths. */
@@ -834,6 +835,7 @@ export function validateModel(model: ProjectModel): AnalysisError[] {
   validateTwoDimensionalGeometry(context);
   validateModelSize(context);
   validateUniqueIds(context);
+  context.errors.push(...validateLoadReferences(model));
   validateNodeCoordinates(context);
   validateMaterials(context);
   validateSections(context);

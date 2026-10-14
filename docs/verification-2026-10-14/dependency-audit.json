@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-14",
+  "before": {
+    "info": 0,
+    "low": 1,
+    "moderate": 5,
+    "high": 7,
+    "critical": 2,
+    "total": 15
+  },
+  "after": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 0,
+    "critical": 0,
+    "total": 0
+  }
+}

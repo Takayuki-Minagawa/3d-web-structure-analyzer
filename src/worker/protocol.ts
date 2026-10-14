@@ -53,6 +53,8 @@ export interface SerializedTargetResult<TArray extends NumericArray> {
   target: AnalysisTarget;
   displacements: TArray;
   reactions: TArray;
+  /** Physical support-node forces, separate from the solver reaction layout. */
+  supportReactions?: TArray;
   elementEndForces: Record<string, TArray>;
   diagrams: SerializedDiagrams;
   warnings: string[];
@@ -68,6 +70,7 @@ export interface SerializedComponentEnvelope<TArray extends NumericArray> {
 export interface SerializedAnalysisEnvelope<TArray extends NumericArray> {
   displacements: SerializedComponentEnvelope<TArray>;
   reactions: SerializedComponentEnvelope<TArray>;
+  supportReactions?: SerializedComponentEnvelope<TArray>;
   elementEndForces: Record<string, SerializedComponentEnvelope<TArray>>;
 }
 

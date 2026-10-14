@@ -79,7 +79,7 @@ describe('improved model editing', () => {
     result = importModelTable(result.model, 'members', 'No\tiNode\tjNode\tSection\tCodeAngle\n1\t1\t2\tH\t90');
     expect(result.model.members).toHaveLength(1);
     expect(result.model.members[0]!.codeAngle).toBe(90);
-    expect(exportModelTable(result.model, 'members')).toContain('1\t1\t2\tH\t90');
+    expect(exportModelTable(result.model, 'members')).toContain('1\t1\t2\tsec\tH\t90');
   });
 
   it('reports invalid spreadsheet references without mutating the source model', () => {

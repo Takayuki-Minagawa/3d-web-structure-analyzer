@@ -383,6 +383,11 @@ function axialForceAt(points: readonly DiagramPoint[], x: number): number {
 
 function resolveBucklingTarget(model: ProjectModel, targetId: string | undefined): AnalysisTarget {
   const targets = getAnalysisTargets(model);
+  if (targetId !== undefined) {
+    const explicit = targets.find((item) => item.id === targetId);
+    if (!explicit) throw createAnalysisException('validation', `targetId: 未知の座屈荷重対象 "${targetId}"。`);
+    return explicit;
+  }
   // Same precedence as the static path: an explicit target, then the active
   // combination, then the active load case.
   const target = [targetId, model.activeLoadCombinationId, getActiveLoadCaseId(model)]

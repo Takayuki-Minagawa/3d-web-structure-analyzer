@@ -5,8 +5,11 @@ export function downloadBlob(filename: string, blob: Blob): void {
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = filename;
+  document.body.appendChild(anchor);
   anchor.click();
-  URL.revokeObjectURL(url);
+  anchor.remove();
+  // The browser consumes the URL asynchronously (especially Safari).
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export function downloadText(filename: string, content: string, type: string): void {
