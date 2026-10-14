@@ -18,7 +18,7 @@ npm run dev
 
 ブラウザで `http://localhost:5173` を開く。
 
-今回の要望対応の調査・段階別計画は [2026-10-14 作業計画](docs/update-plan-2026-10-14.md)、実装範囲と検証結果は [更新記録](docs/update-results-2026-10-14.md) を参照してください。
+再現用モデルとして、[支点ばね](docs/examples/spring-reaction.json)と[カップリング支点](docs/examples/coupled-support.json)のJSONを読み込めます。
 
 ## ビルド
 
