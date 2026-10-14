@@ -333,12 +333,11 @@ describe('linear buckling analysis', () => {
     const combo = analyzeBuckling(model, { modeCount: 1, divisions: 8, targetId: 'combo' });
     expect(active.target.id).toBe('a');
     expect(combo.target.type).toBe('loadCombination');
-    // An unknown target falls back to the active load case, like the static path.
-    const fallback = analyzeBuckling(
+    // Explicit IDs must not silently select another load case.
+    expect(() => analyzeBuckling(
       { ...model, activeLoadCaseId: 'b' },
       { modeCount: 1, divisions: 8, targetId: 'missing' }
-    );
-    expect(fallback.target.id).toBe('b');
+    )).toThrow('targetId');
     expectRelative(combo.modes[0]!.loadFactor, active.modes[0]!.loadFactor / 5, 1e-9);
   });
 

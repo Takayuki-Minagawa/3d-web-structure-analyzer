@@ -75,6 +75,20 @@ html, body, #root {
   height: 100%;
 }
 
+.autosave-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  background: var(--bg-surface);
+  color: var(--text);
+  font-size: 11px;
+}
+.autosave-status.error { color: var(--danger); }
+.autosave-status button { padding: 2px 8px; cursor: pointer; }
+.properties-toggle { display: none; }
+
 /* Top bar */
 .top-bar {
   display: flex;
@@ -1265,6 +1279,28 @@ button.danger,
   .property-panel { width: 210px; }
   .template-grid,
   .generator-fields { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 700px) {
+  .top-bar { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .top-actions { justify-content: flex-start; gap: 3px; }
+  .top-actions button { padding: 4px 6px; }
+  .properties-toggle { display: inline-block; }
+  .main-area { position: relative; }
+  .toolbar { width: 64px; min-width: 64px; }
+  .property-panel { display: none; }
+  .properties-open .property-panel {
+    display: block;
+    position: absolute;
+    z-index: 20;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(300px, calc(100% - 64px));
+    box-shadow: -4px 0 16px #0005;
+  }
+  .canvas-palette { max-height: 35%; overflow: auto; max-width: calc(100% - 12px); }
+  .canvas-coordinate-form { max-width: calc(100% - 12px); }
 }
 
 /* Eigenvalue result rows select the mode shape shown in the viewport. */

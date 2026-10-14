@@ -5,8 +5,9 @@ import { validateModel } from '../../core/model/validation';
 import { analyzeFrame } from '../../core/analysis/analyzeFrame';
 import { resolveAnalysisLoadModel } from '../../core/model/loadCases';
 import { convertFrameJsonWithReport } from '../../io/frameJsonConverter';
-import { isFrameJsonFormat, parseFrameJson } from '../../io/frameJsonParser';
+import { FrameJsonValidationError, isFrameJsonFormat, parseFrameJson } from '../../io/frameJsonParser';
 import { importJsonTextAuto } from '../../io/jsonImporter';
+import { createDefaultModel, useProjectStore } from '../../state/projectStore';
 
 function createFrameJson(): Record<string, unknown> {
   const zeroNodeLoad = { p1: 0, p2: 0, p3: 0, m1: 0, m2: 0, m3: 0 };
@@ -70,6 +71,105 @@ function createFrameJson(): Record<string, unknown> {
 }
 
 describe('FrameJson import reliability', () => {
+  it.each([
+    'not-a-number', '', '  ', 'Infinity', 'NaN', '0x10', true, false, null, [], {}, Infinity, NaN,
+  ])('rejects an explicit invalid numeric load without changing the source: %j', (invalid) => {
+    const raw = createFrameJson();
+    const nodes = raw.nodes as Array<Record<string, unknown>>;
+    const loads = nodes[0]!.loads as Array<Record<string, unknown>>;
+    loads[0]!.p1 = invalid;
+    try {
+      parseFrameJson(raw);
+      throw new Error('expected import rejection');
+    } catch (error) {
+      expect(error).toBeInstanceOf(FrameJsonValidationError);
+      expect(error).toMatchObject({ path: 'nodes[0].loads[0].p1', value: invalid });
+    }
+    expect(loads[0]!.p1).toBe(invalid);
+  });
+
+  it.each([
+    ['nodes', 'x', 'nodes[0].x'],
+    ['sections', 'p1_A', 'sections[0].p1_A'],
+    ['materials', 'young', 'materials[0].young'],
+  ])('rejects invalid or missing %s.%s with its source path', (collection, field, path) => {
+    const raw = createFrameJson();
+    const item = (raw[collection] as Array<Record<string, unknown>>)[0]!;
+    item[field] = 'not-a-number';
+    expect(() => parseFrameJson(raw)).toThrow(path);
+    delete item[field];
+    expect(() => parseFrameJson(raw)).toThrow(path);
+  });
+
+  it('leaves the current project unchanged when FrameJson import fails', () => {
+    useProjectStore.getState().loadModel(createDefaultModel());
+    const before = useProjectStore.getState().model;
+    const raw = createFrameJson();
+    (raw.nodes as Array<Record<string, unknown>>)[0]!.x = 'bad-coordinate';
+    expect(() => useProjectStore.getState().importFrameJson(JSON.stringify(raw))).toThrow('nodes[0].x');
+    expect(useProjectStore.getState().model).toBe(before);
+  });
+
+  it('accepts finite decimal/exponent strings and defaults only omitted optional numeric fields', () => {
+    const raw = createFrameJson();
+    const node = (raw.nodes as Array<Record<string, unknown>>)[0]!;
+    node.number = '1';
+    node.x = ' -1.25e2 ';
+    delete node.temperature;
+    const loads = node.loads as Array<Record<string, unknown>>;
+    delete loads[0]!.p2;
+    const parsed = parseFrameJson(raw);
+    expect(parsed.nodes[0]).toMatchObject({ number: 1, x: -125, temperature: 0 });
+    expect(parsed.nodes[0]!.loads[0]!.p2).toBe(0);
+    node.number = '1.5';
+    expect(() => parseFrameJson(raw)).toThrow('nodes[0].number must be a safe integer');
+  });
+
+  it.each([
+    { poisson: 0, expectedG: 100 },
+    { poisson: -0.2, expectedG: 125 },
+    { poisson: undefined, expectedG: 200 / 2.6 },
+  ])('preserves Poisson ratio $poisson and records material completion', ({ poisson, expectedG }) => {
+    const raw = createFrameJson();
+    const material = (raw.materials as Array<Record<string, unknown>>)[0]!;
+    Object.assign(material, { young: 200, shear: 0, poisson });
+    const result = convertFrameJsonWithReport(parseFrameJson(raw));
+    expect(result.model.materials[0]!.nu).toBe(poisson ?? 0.3);
+    expect(result.model.materials[0]!.G).toBeCloseTo(expectedG, 12);
+    expect(result.warnings.some((warning) => warning.code === 'defaulted-poisson-ratio')).toBe(poisson === undefined);
+    expect(result.warnings.some((warning) => warning.code === 'calculated-shear-modulus')).toBe(true);
+  });
+
+  it('keeps an explicit shear modulus even when the Poisson ratio is zero', () => {
+    const raw = createFrameJson();
+    Object.assign((raw.materials as Array<Record<string, unknown>>)[0]!, { young: 200, shear: 80, poisson: 0 });
+    const result = convertFrameJsonWithReport(parseFrameJson(raw));
+    expect(result.model.materials[0]).toMatchObject({ E: 200, G: 80, nu: 0 });
+    expect(result.warnings.some((warning) => warning.code === 'calculated-shear-modulus')).toBe(false);
+  });
+
+  it.each(['nodes', 'members', 'materials', 'sections'])('rejects malformed and missing required %s arrays', (field) => {
+    const raw = createFrameJson();
+    for (const invalid of [null, {}, true, '[]']) {
+      raw[field] = invalid;
+      expect(() => parseFrameJson(raw)).toThrow(`${field} must be an array`);
+    }
+    delete raw[field];
+    expect(() => parseFrameJson(raw)).toThrow(`${field} must be an array`);
+  });
+
+  it('rejects malformed optional arrays and malformed nested load records', () => {
+    const raw = createFrameJson();
+    raw.boundaries = {};
+    expect(() => parseFrameJson(raw)).toThrow('boundaries must be an array');
+    delete raw.boundaries;
+    const node = (raw.nodes as Array<Record<string, unknown>>)[0]!;
+    node.loads = {};
+    expect(() => parseFrameJson(raw)).toThrow('nodes[0].loads must be an array');
+    node.loads = [null];
+    expect(() => parseFrameJson(raw)).toThrow('nodes[0].loads[0] must be an object');
+  });
+
   it('recognizes FrameJson when boundaries are omitted and parses auto-import JSON once', () => {
     const raw = createFrameJson();
     delete raw.boundaries;

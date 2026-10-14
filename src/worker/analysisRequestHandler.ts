@@ -87,6 +87,7 @@ function analyzeStatic(request: AnalysisExecutionRequest, transfer: TransferList
         target: targetResult.target,
         displacements: transfer.add(targetResult.displacements),
         reactions: transfer.add(targetResult.reactions),
+        ...(targetResult.supportReactions ? { supportReactions: transfer.add(targetResult.supportReactions) } : {}),
         elementEndForces,
         diagrams: serializeDiagrams(targetResult.diagrams),
         warnings: targetResult.warnings,
@@ -95,6 +96,7 @@ function analyzeStatic(request: AnalysisExecutionRequest, transfer: TransferList
     envelope: {
       displacements: transfer.envelope(result.envelope.displacements),
       reactions: transfer.envelope(result.envelope.reactions),
+      ...(result.envelope.supportReactions ? { supportReactions: transfer.envelope(result.envelope.supportReactions) } : {}),
       elementEndForces: elementEnvelope,
     },
     factorizationCount: result.factorizationCount,

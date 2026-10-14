@@ -4,10 +4,15 @@ import type {
   AnalysisTarget,
   ProjectModel,
 } from '../core/model/types';
-import { getActiveLoadTargetName } from '../core/model/loadCases';
+import { getActiveLoadTargetName, getLoadCases } from '../core/model/loadCases';
 import { memberLabel, nodeLabel } from '../core/model/displayNumbers';
 import { formatEngineering } from '../core/formatEngineering';
 import { DOF_NAMES } from '../core/model/restraints';
+import { getAnalysisMode } from '../core/model/analysisMode';
+import { buildPhysicalSupportReactionRows, buildSupportReactionLayout, buildSupportReactionVector, recoverLegacySupportReactionEnvelope } from '../core/supportReactions';
+import { CURRENT_PROJECT_SCHEMA_VERSION } from './projectFileParser';
+import { SOLVER_VERSION } from '../core/analysis/version';
+import { modelFingerprint } from './reportMetadata';
 import type {
   SerializedAnalysisEnvelope,
   SerializedBucklingResults,
@@ -93,6 +98,7 @@ interface ReportDocument {
   /** Shown in place of the static result tables when there are none. */
   noResultMessage: string;
   errorMessage: string | null;
+  sourceModelJson: string;
 }
 
 function inputTable(name: string, headers: string[], rows: string[][]): ReportTable {
@@ -113,87 +119,140 @@ function governingTable(name: string, headers: string[], rows: string[][]): Repo
 }
 
 function buildInputTables(model: ProjectModel): ReportTable[] {
-  const { length } = model.units;
+  const { length, force, moment } = model.units;
+  const mode = getAnalysisMode(model);
+  const supportLayout = buildSupportReactionLayout(model);
+  const loadCaseId = (item: { loadCaseId?: string }) => item.loadCaseId ?? getLoadCases(model)[0]!.id;
   const nodeName = (nodeId: string) => nodeLabel(model.nodes.find((node) => node.id === nodeId));
   const tables: ReportTable[] = [
+    inputTable('Analysis Settings', ['Setting', 'Value'], [
+      ['Analysis mode', mode],
+      ['Active load case ID', model.activeLoadCaseId ?? ''],
+      ['Active combination ID', model.activeLoadCombinationId ?? ''],
+      ['Coordinates / nodal quantities', 'Global XYZ; rotations in radians'],
+      ['Member quantities', 'Local xyz; i to j; code angle in degrees'],
+      ['Support reaction convention', 'Physical support nodes; shared rigid reactions occur once at a representative; springs remain at their source nodes'],
+      ['Envelope convention', 'Independent component extrema; not a simultaneous equilibrium load state'],
+      ['Solver version', SOLVER_VERSION],
+      ['Project schema version', String(CURRENT_PROJECT_SCHEMA_VERSION)],
+      ['Model hash (non-cryptographic)', modelFingerprint(model)],
+    ]),
+    inputTable('Units', ['Quantity', 'Unit'], [
+      ['Force', force], ['Length / displacement', length], ['Moment', moment],
+      ['Rotation', 'rad'], ['Time', 's'], ['Temperature change', 'ΔT (model temperature scale)'],
+      ['Stress / E / G', `${force}/${length}²`], ['Area', `${length}²`],
+      ['Section inertia', `${length}⁴`], ['Distributed load', `${force}/${length}`],
+      ['Translational spring', `${force}/${length}`], ['Rotational spring', `${moment}/rad`],
+      ['Mass', `${force}·s²/${length}`], ['Mass density', `${force}·s²/${length}⁴`],
+      ['Gravity / acceleration', `${length}/s²`], ['Thermal expansion coefficient', '1/ΔT'],
+      ['Dimensionless', 'nu, ky, kz, combination factors, self-weight factors, buckling factors'],
+      ['Consistency', 'All inputs use a consistent force-length-second system; unit labels do not convert values'],
+    ]),
     inputTable(
       'Nodes',
-      ['Node', `X [${length}]`, `Y [${length}]`, `Z [${length}]`, ...DOF_NAMES],
+      ['Node', `X [${length}]`, `Y [${length}]`, `Z [${length}]`, ...DOF_NAMES, 'ID'],
       model.nodes.map((node) => [
         nodeLabel(node), fmt(node.x), fmt(node.y), fmt(node.z),
         ...DOF_NAMES.map((dof) => node.restraint[dof] ? 'fixed' : 'free'),
+        node.id,
       ]),
     ),
+    inputTable('Effective Nodal Restraints', ['Node', ...DOF_NAMES], model.nodes.map((node, index) => [
+      nodeLabel(node), ...DOF_NAMES.map((_, component) => supportLayout.rigidOwners.has(supportLayout.dofMap[index * 6 + component]!) ? 'fixed' : 'free'),
+    ])),
     inputTable(
       'Members',
-      ['Member', 'i', 'j', 'Section', 'Code angle [deg]'],
+      ['Member', 'i', 'j', 'Section', 'Code angle [deg]', 'i spring x/y/z', 'j spring x/y/z', 'Torsion restraint', 'ID', 'Section ID'],
       model.members.map((member) => [
         memberLabel(member),
         nodeName(member.ni),
         nodeName(member.nj),
         model.sections.find((section) => section.id === member.sectionId)?.name ?? member.sectionId,
         fmt(member.codeAngle),
+        [member.iSprings.x, member.iSprings.y, member.iSprings.z].join('/'),
+        [member.jSprings.x, member.jSprings.y, member.jSprings.z].join('/'),
+        member.torsionRestraint ?? 'none', member.id, member.sectionId,
       ]),
     ),
     inputTable(
       'Materials',
-      ['Name', 'E', 'G', 'nu', 'alpha', 'density'],
+      ['Name', `E [${force}/${length}²]`, `G [${force}/${length}²]`, 'nu [-]', 'alpha [1/ΔT]', `density [${force}·s²/${length}⁴]`, 'ID'],
       model.materials.map((material) => [
         material.name, fmt(material.E), fmt(material.G), fmt(material.nu),
-        fmt(material.expansion), fmt(material.density),
+        fmt(material.expansion), fmt(material.density ?? 0), material.id,
       ]),
     ),
     inputTable(
       'Sections',
-      ['Name', 'Material', 'A', 'Ix', 'Iy', 'Iz', 'ky', 'kz'],
+      ['Name', 'Material', `A [${length}²]`, `Ix [${length}⁴]`, `Iy [${length}⁴]`, `Iz [${length}⁴]`, 'ky [-]', 'kz [-]', 'ID', 'Material ID'],
       model.sections.map((section) => [
         section.name,
         model.materials.find((material) => material.id === section.materialId)?.name ?? section.materialId,
         fmt(section.A), fmt(section.Ix), fmt(section.Iy), fmt(section.Iz), fmt(section.ky), fmt(section.kz),
+        section.id, section.materialId,
       ]),
     ),
     inputTable(
       'Loads',
-      ['Kind', 'Target', 'Case', 'Components'],
+      ['Kind', 'Target', 'Case', 'Components', 'ID', 'Case ID'],
       [
         ...model.nodalLoads.map((load) => [
           'Nodal', nodeName(load.nodeId), loadCaseName(model, load.loadCaseId),
-          `Fx=${fmt(load.fx)}, Fy=${fmt(load.fy)}, Fz=${fmt(load.fz)}, Mx=${fmt(load.mx)}, My=${fmt(load.my)}, Mz=${fmt(load.mz)}`,
+          `Fx=${fmt(load.fx)}, Fy=${fmt(load.fy)}, Fz=${fmt(load.fz)} [${force}], Mx=${fmt(load.mx)}, My=${fmt(load.my)}, Mz=${fmt(load.mz)} [${moment}] (global)`,
+          load.id, loadCaseId(load),
         ]),
         ...model.memberLoads.map((load) => [
           'Member', memberLabel(model.members.find((member) => member.id === load.memberId)),
-          loadCaseName(model, load.loadCaseId), memberLoadSummary(load),
+          loadCaseName(model, load.loadCaseId), memberLoadSummary(load, model.units), load.id, loadCaseId(load),
         ]),
       ],
     ),
     inputTable(
       'Nodal Springs',
-      ['Node', 'Kux', 'Kuy', 'Kuz', 'Krx', 'Kry', 'Krz'],
+      ['Node', ...DOF_NAMES.map((dof, index) => `K${dof} [${index < 3 ? `${force}/${length}` : `${moment}/rad`}]`), 'ID'],
       (model.nodeSprings ?? []).map((spring) => [
-        nodeName(spring.nodeId), ...DOF_NAMES.map((dof) => fmt(spring[dof])),
+        nodeName(spring.nodeId), ...DOF_NAMES.map((dof) => fmt(spring[dof])), spring.id,
       ]),
     ),
   ];
+  tables.push(
+    inputTable('Spring Library', ['ID', 'Number', 'Method (source code)', `Ktheta [${moment}/rad]`, 'Behavior'], model.springs.map((spring) => [
+      spring.id, String(spring.number), String(spring.method), fmt(spring.kTheta),
+      spring.number <= 1 ? 'rigid' : spring.number === 2 || spring.kTheta === 0 ? 'pin' : 'rotational spring',
+    ])),
+    inputTable('End Spring Convention', ['Number', 'Behavior'], [['0 / 1', 'rigid'], ['2', 'pin'], ['3 or greater', 'Ktheta from Spring Library; zero means pin']]),
+    inputTable('Couplings', ['ID', 'Master', 'Slave', ...DOF_NAMES], model.couplings.map((coupling) => [
+      coupling.id, nodeName(coupling.masterNodeId), nodeName(coupling.slaveNodeId),
+      ...DOF_NAMES.map((dof) => coupling[dof] ? 'equal' : 'independent'),
+    ])),
+    inputTable('Load Cases', ['ID', 'Name'], getLoadCases(model).map((loadCase) => [loadCase.id, loadCase.name])),
+    inputTable('Load Combinations', ['ID', 'Name', 'Case ID', 'Case name', 'Factor [-]'], (model.loadCombinations ?? []).flatMap((combination) =>
+      combination.factors.length ? combination.factors.map((term) => [
+        combination.id, combination.name, term.loadCaseId, loadCaseName(model, term.loadCaseId), fmt(term.factor),
+      ]) : [[combination.id, combination.name, '', '', '']]
+    )),
+  );
   if (model.prescribedDisplacements?.length) {
     tables.push(inputTable(
       'Prescribed Displacements',
-      ['Node', 'Case', ...DOF_NAMES],
+      ['Node', 'Case', ...DOF_NAMES.map((dof, index) => `${dof} [${index < 3 ? length : 'rad'}]`), 'ID', 'Case ID'],
       model.prescribedDisplacements.map((item) => [
         nodeName(item.nodeId), loadCaseName(model, item.loadCaseId),
         ...DOF_NAMES.map((dof) => fmt(item[dof])),
+        item.id, loadCaseId(item),
       ]),
     ));
   }
   if (model.nodeMasses?.length) {
     tables.push(inputTable(
       'Nodal Masses',
-      ['Node', 'Mass'],
-      model.nodeMasses.map((item) => [nodeName(item.nodeId), fmt(item.mass)]),
+      ['Node', `Mass [${force}·s²/${length}]`, 'ID'],
+      model.nodeMasses.map((item) => [nodeName(item.nodeId), fmt(item.mass), item.id]),
     ));
   }
   tables.push(inputTable(
     'Gravity',
-    ['X', 'Y', 'Z'],
+    ['X', 'Y', 'Z'].map((axis) => `${axis} [${length}/s²]`),
     [[fmt(model.gravity?.x ?? 0), fmt(model.gravity?.y ?? 0), fmt(model.gravity?.z ?? 0)]],
   ));
   return tables;
@@ -201,6 +260,17 @@ function buildInputTables(model: ProjectModel): ReportTable[] {
 
 function buildResultTables(model: ProjectModel, resolved: ResolvedReportResult): ReportTable[] {
   const { result, governingTargets } = resolved;
+  const { length, force, moment } = model.units;
+  const supportRows = buildPhysicalSupportReactionRows(model, result.reactions).rows;
+  const nodeIndices = new Map(model.nodes.map((node, index) => [node.id, index]));
+  const reactionRows = (governing = false): string[][] => supportRows.map((row) => [
+    nodeLabel(model.nodes[nodeIndices.get(row.nodeId)!]),
+    ...row.cells.map((cell, component) => cell.value === null
+      ? cell.isShared ? 'shared' : ''
+      : governing
+        ? governingTargets?.reactions[nodeIndices.get(row.nodeId)! * 6 + component] ?? ''
+        : `${fmt(cell.value)}${cell.isShared ? '*' : ''}`),
+  ]);
   const nodeRows = (cell: (index: number) => string): string[][] =>
     model.nodes.map((node, nodeIndex) => [
       nodeLabel(node),
@@ -213,18 +283,18 @@ function buildResultTables(model: ProjectModel, resolved: ResolvedReportResult):
     ]);
 
   const tables = [
-    resultTable('Displacements', ['Node', ...DOF_NAMES], nodeRows((index) => fmt(result.displacements[index]))),
-    resultTable('Reactions', ['Node', ...REACTION_LABELS], nodeRows((index) => fmt(result.reactions[index]))),
+    resultTable('Displacements', ['Node', ...DOF_NAMES.map((name, index) => `${name} [${index < 3 ? length : 'rad'}]`)], nodeRows((index) => fmt(result.displacements[index]))),
+    resultTable('Reactions', ['Node', ...REACTION_LABELS.map((name, index) => `${name} [${index < 3 ? force : moment}]`)], reactionRows()),
     resultTable(
       'Member End Forces',
-      ['Member', ...END_FORCE_LABELS],
+      ['Member', ...END_FORCE_LABELS.map((name, index) => `${name} [${index % 6 < 3 ? force : moment}]`)],
       memberRows((memberId, index) => fmt(result.elementEndForces[memberId]?.[index])),
     ),
   ];
   if (governingTargets) {
     tables.push(
       governingTable('Displacements', ['Node', ...DOF_NAMES], nodeRows((index) => governingTargets.displacements[index] ?? '')),
-      governingTable('Reactions', ['Node', ...REACTION_LABELS], nodeRows((index) => governingTargets.reactions[index] ?? '')),
+      governingTable('Reactions', ['Node', ...REACTION_LABELS], reactionRows(true)),
       governingTable(
         'Member End Forces',
         ['Member', ...END_FORCE_LABELS],
@@ -239,6 +309,12 @@ function buildEigenTables(input: ReportInput): ReportTable[] {
   const tables: ReportTable[] = [];
   const percent = (ratio: number) => (ratio * 100).toFixed(2);
   if (input.modal) {
+    tables.push(resultTable('Modal Analysis Settings', ['Setting', 'Value'], [
+      ['Divisions per member', String(input.modal.divisions)],
+      ['Free DOF count', String(input.modal.freeDofCount)],
+      ['Returned mode count', String(input.modal.modes.length)],
+      [`Total mass XYZ [${input.model.units.force}·s²/${input.model.units.length}]`, input.modal.totalMass.map(fmt).join(', ')],
+    ]));
     tables.push(resultTable(
       `Modal Analysis (${input.modal.divisions} element(s) per member)`,
       [
@@ -253,6 +329,13 @@ function buildEigenTables(input: ReportInput): ReportTable[] {
     ));
   }
   if (input.buckling) {
+    tables.push(resultTable('Buckling Analysis Settings', ['Setting', 'Value'], [
+      ['Divisions per member', String(input.buckling.divisions)],
+      ['Free DOF count', String(input.buckling.freeDofCount)],
+      ['Returned mode count', String(input.buckling.modes.length)],
+      ['Reference target ID', input.buckling.target.id],
+      ['Reference target type', input.buckling.target.type],
+    ]));
     tables.push(resultTable(
       `Buckling Analysis — ${input.buckling.target.name} (${input.buckling.divisions} element(s) per member)`,
       ['Mode', 'Load factor'],
@@ -290,16 +373,22 @@ function buildReportDocument(input: ReportInput): ReportDocument {
     ])],
     noResultMessage: input.isResultStale ? STALE_RESULT_MESSAGE : NO_RESULT_MESSAGE,
     errorMessage: error?.message ?? null,
+    sourceModelJson: JSON.stringify({
+      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      savedAt: generatedAt.toISOString(),
+      model,
+    }, null, 2),
   };
 }
 
 export function generateMarkdownReport(input: ReportInput): string {
   const doc = buildReportDocument(input);
   const lines: string[] = [
-    `# ${doc.title}`,
+    `# ${markdownCell(doc.title)}`,
     '',
     `Generated: ${doc.generatedAt}`,
-    `Analysis target: ${doc.targetLabel}`,
+    `Analysis target: ${markdownCell(doc.targetLabel)}`,
+    `Units: ${markdownCell(doc.unitsLabel)}`,
     '',
     '## Model',
     '',
@@ -308,24 +397,17 @@ export function generateMarkdownReport(input: ReportInput): string {
   ];
 
   const warningLines = doc.warnings.length > 0
-    ? ['## Warnings', '', ...doc.warnings.map((warning) => `- ${warning}`), '']
+    ? ['## Warnings', '', ...doc.warnings.map((warning) => `- ${markdownCell(warning)}`), '']
     : [];
-  if (doc.errorMessage !== null) {
-    lines.push('## Analysis Error', '', doc.errorMessage, '');
-    for (const table of doc.eigenTables) {
-      lines.push(`## ${table.title}`, '', markdownTable(table.headers, table.rows), '');
-    }
-    return [...lines, ...warningLines].join('\n');
-  }
-
   for (const table of doc.inputTables) {
-    lines.push(`## ${table.title}`, '', markdownTable(table.headers, table.rows), '');
+    lines.push(`## ${markdownCell(table.title)}`, '', markdownTable(table.headers, table.rows), '');
   }
-  if (!doc.resultTables) lines.push('## Results', '', doc.noResultMessage, '');
+  if (doc.errorMessage !== null) lines.push('## Analysis Error', '', markdownCell(doc.errorMessage), '');
+  else if (!doc.resultTables) lines.push('## Results', '', doc.noResultMessage, '');
   for (const table of [...(doc.resultTables ?? []), ...doc.eigenTables]) {
-    lines.push(`## ${table.title}`, '', markdownTable(table.headers, table.rows), '');
+    lines.push(`## ${markdownCell(table.title)}`, '', markdownTable(table.headers, table.rows), '');
   }
-  return [...lines, ...warningLines].join('\n');
+  return [...lines, ...warningLines, '## Original Model JSON (full precision)', '', '```json', doc.sourceModelJson, '```', ''].join('\n');
 }
 
 export function generateCsvReport(input: ReportInput): string {
@@ -334,6 +416,8 @@ export function generateCsvReport(input: ReportInput): string {
     ['Frame Analysis Report'],
     ['Generated', doc.generatedAt],
     ['Analysis target', doc.targetLabel],
+    ['Units', doc.unitsLabel],
+    ['Title', doc.title],
     [],
     ['Model'],
     ...doc.summary,
@@ -343,17 +427,18 @@ export function generateCsvReport(input: ReportInput): string {
     rows.push([table.csvTitle], table.headers, ...table.rows, []);
   };
 
+  doc.inputTables.forEach(pushTable);
   if (doc.errorMessage !== null) {
     rows.push(['Analysis Error'], [doc.errorMessage], []);
     doc.eigenTables.forEach(pushTable);
   } else {
-    doc.inputTables.forEach(pushTable);
     if (!doc.resultTables) rows.push(['Results'], [doc.noResultMessage], []);
     [...(doc.resultTables ?? []), ...doc.eigenTables].forEach(pushTable);
   }
   if (doc.warnings.length > 0) {
     rows.push(['Warnings'], ...doc.warnings.map((warning) => [warning]));
   }
+  rows.push([], ['Original Model JSON (full precision)'], [doc.sourceModelJson]);
   return rows.map(csvRow).join('\n');
 }
 
@@ -395,6 +480,7 @@ export function generatePrintableReportHtml(input: ReportInput): string {
     viewportImageDataUrl ? `<img class="viewport" alt="3D model viewport" src="${escapeHtml(viewportImageDataUrl)}">` : '',
     ...doc.inputTables.map(tableSection),
     resultSections,
+    `<details><summary>Original Model JSON (full precision)</summary><code style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(doc.sourceModelJson)}</code></details>`,
     '</body>',
     '</html>',
   ].join('');
@@ -409,53 +495,64 @@ function htmlTable(headers: string[], rows: string[][]): string {
 }
 
 function loadCaseName(model: ProjectModel, loadCaseId: string | undefined): string {
-  return model.loadCases?.find((loadCase) => loadCase.id === loadCaseId)?.name ?? loadCaseId ?? '';
+  const cases = getLoadCases(model);
+  return cases.find((loadCase) => loadCase.id === (loadCaseId ?? cases[0]?.id))?.name ?? loadCaseId ?? '';
 }
 
-function memberLoadSummary(load: ProjectModel['memberLoads'][number]): string {
+function memberLoadSummary(load: ProjectModel['memberLoads'][number], units: ProjectModel['units']): string {
+  const { force, length, moment } = units;
   if (load.type === 'cmq') {
-    return `CMQ iQ=(${fmt(load.iQx)},${fmt(load.iQy)},${fmt(load.iQz)}) iM=(${fmt(load.iMy)},${fmt(load.iMz)}) jQ=(${fmt(load.jQx)},${fmt(load.jQy)},${fmt(load.jQz)}) jM=(${fmt(load.jMy)},${fmt(load.jMz)}) mid=(${fmt(load.moy)},${fmt(load.moz)})`;
+    return `CMQ (local) iQ=(${fmt(load.iQx)},${fmt(load.iQy)},${fmt(load.iQz)}) [${force}] iM=(${fmt(load.iMy)},${fmt(load.iMz)}) [${moment}] jQ=(${fmt(load.jQx)},${fmt(load.jQy)},${fmt(load.jQz)}) [${force}] jM=(${fmt(load.jMy)},${fmt(load.jMz)}) mid=(${fmt(load.moy)},${fmt(load.moz)}) [${moment}]`;
   }
   if (load.type === 'point') {
-    return `Point ${load.direction}=${fmt(load.value)} at a=${fmt(load.a)}`;
+    return `Point ${load.direction}=${fmt(load.value)} [${force}] at a=${fmt(load.a)} [${length}]`;
   }
   if (load.type === 'trapezoid') {
-    return `Trapezoid ${load.direction} w1=${fmt(load.value)} w2=${fmt(load.valueEnd)} from a=${fmt(load.a)} to b=${fmt(load.b)}`;
+    return `Trapezoid ${load.direction} w1=${fmt(load.value)} w2=${fmt(load.valueEnd)} [${force}/${length}] from a=${fmt(load.a)} to b=${fmt(load.b)} [${length}]`;
   }
   if (load.type === 'temperature') {
-    return `Temperature deltaT=${fmt(load.value)}`;
+    return `Temperature deltaT=${fmt(load.value)} [ΔT] (localX)`;
   }
   if (load.type === 'selfWeight') {
-    return `Self-weight factor=${fmt(load.value)} (${load.direction})`;
+    return `Self-weight factor=${fmt(load.value)} [-] (global gravity vector; hint ${load.direction})`;
   }
-  return `UDL ${load.direction}=${fmt(load.value)}`;
+  return `UDL ${load.direction}=${fmt(load.value)} [${force}/${length}]`;
 }
 
 function reportTargetLabel(input: ReportInput): string {
   const view = input.resultView;
-  if (!view) return getActiveLoadTargetName(input.model);
+  if (!view) {
+    try {
+      return getActiveLoadTargetName(input.model);
+    } catch {
+      // Invalid target references must still be inspectable in an error report.
+      return `Unresolved target: ${input.model.activeLoadCombinationId ?? input.model.activeLoadCaseId ?? ''}`;
+    }
+  }
   if (view.kind === 'envelope') {
     return view.bound === 'min'
       ? 'Minimum component-wise envelope'
       : 'Maximum component-wise envelope';
   }
   const targetType = view.target.type === 'loadCase' ? 'Load case' : 'Load combination';
-  return `${targetType}: ${view.target.name}`;
+  return `${targetType}: ${view.target.name} [${view.target.id}]`;
 }
 
 function resolveReportResult(input: ReportInput): ResolvedReportResult | null {
   const view = input.resultView;
   if (view?.kind === 'envelope') {
+    const supportEnvelope = view.envelope.supportReactions ?? recoverLegacySupportReactionEnvelope(input.model, view.envelope.reactions);
     const values = view.bound === 'min' ? 'min' : 'max';
     const targetIds = view.bound === 'min' ? 'minTargetIds' : 'maxTargetIds';
     const targetName = (targetId: string | undefined): string => {
       if (!targetId) return '';
-      return view.targetNames[targetId] ?? targetId;
+      const name = view.targetNames[targetId];
+      return name ? `${name} [${targetId}]` : targetId;
     };
     return {
       result: {
         displacements: view.envelope.displacements[values],
-        reactions: view.envelope.reactions[values],
+        reactions: supportEnvelope[values],
         elementEndForces: Object.fromEntries(
           Object.entries(view.envelope.elementEndForces).map(([memberId, component]) => [
             memberId,
@@ -467,7 +564,7 @@ function resolveReportResult(input: ReportInput): ResolvedReportResult | null {
       },
       governingTargets: {
         displacements: view.envelope.displacements[targetIds].map(targetName),
-        reactions: view.envelope.reactions[targetIds].map(targetName),
+        reactions: supportEnvelope[targetIds].map(targetName),
         elementEndForces: Object.fromEntries(
           Object.entries(view.envelope.elementEndForces).map(([memberId, component]) => [
             memberId,
@@ -478,7 +575,13 @@ function resolveReportResult(input: ReportInput): ResolvedReportResult | null {
     };
   }
   if (!input.result) return null;
-  return { result: input.result, governingTargets: null };
+  return {
+    result: {
+      ...input.result,
+      reactions: Array.from(buildSupportReactionVector(input.model, input.result.reactions, input.result.displacements)),
+    },
+    governingTargets: null,
+  };
 }
 
 export function assertReportExportable(input: ReportInput): void {
@@ -494,7 +597,9 @@ function markdownTable(headers: string[], rows: string[][]): string {
 }
 
 function markdownCell(value: string): string {
-  return value.split('\\').join('\\\\').split('|').join('\\|');
+  return value.split('\\').join('\\\\').split('|').join('\\|')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\r\n|\r|\n/g, '<br>');
 }
 
 function csvRow(row: string[]): string {
@@ -502,8 +607,12 @@ function csvRow(row: string[]): string {
 }
 
 function csvCell(value: string): string {
-  if (!/[",\n]/.test(value)) return value;
-  return `"${value.split('"').join('""')}"`;
+  // Keep genuine numerical output numeric, but prevent spreadsheet formulas in
+  // names/IDs/text (including whitespace-prefixed expressions) from executing.
+  const numeric = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(value);
+  const safe = !numeric && (/^\s*[=+@-]/.test(value) || /^[\t\r\n]/.test(value)) ? `'${value}` : value;
+  if (!/[",\r\n]/.test(safe)) return safe;
+  return `"${safe.split('"').join('""')}"`;
 }
 
 function escapeHtml(value: string): string {

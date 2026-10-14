@@ -9,6 +9,7 @@ import type {
   MemberId,
 } from './types';
 import { getAnalysisMode, getEffectiveRestraint } from './analysisMode';
+import { validateLoadReferences } from './loadCases';
 import { computeMemberLocalAxes } from './localAxes';
 import { resolveDofMap } from './couplings';
 import { buildLocalStiffness } from '../analysis/element3dFrame';
@@ -51,6 +52,8 @@ function resolveSpring(
 }
 
 export function buildIndexedModel(model: ProjectModel): IndexedModel {
+  const referenceError = validateLoadReferences(model)[0];
+  if (referenceError) throw new Error(referenceError.message);
   const nodeIdToIndex = new Map<NodeId, number>();
   const memberIdToIndex = new Map<MemberId, number>();
   const analysisMode = getAnalysisMode(model);

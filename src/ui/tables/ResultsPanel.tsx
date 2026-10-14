@@ -5,6 +5,7 @@ import { useT } from '../../i18n';
 import type { TKey } from '../../i18n';
 import type { AnalysisResult, ProjectModel } from '../../core/model/types';
 import { buildEffectiveReactionRows } from './reactionRows';
+import { buildPhysicalSupportReactionRows, recoverLegacySupportReactionEnvelope } from '../../core/supportReactions';
 import { memberLabel, nodeLabel } from '../../core/model/displayNumbers';
 import { formatEngineering } from '../../core/formatEngineering';
 import type { SerializedComponentEnvelope } from '../../worker/protocol';
@@ -128,7 +129,7 @@ const StaticResults: React.FC<{ activeTab: StaticTab }> = ({ activeTab }) => {
 
       {activeTab === 'reactions' && (
         envelopeBound && analysisEnvelope
-          ? <EnvelopeNodeTable model={model} envelope={analysisEnvelope.reactions} bound={envelopeBound} targetNames={targetNames} labels={['Rx', 'Ry', 'Rz', 'Mx', 'My', 'Mz']} governingTemplate={t('results.governing')} />
+          ? <EnvelopeReactionTable model={model} envelope={analysisEnvelope.supportReactions ?? recoverLegacySupportReactionEnvelope(model, analysisEnvelope.reactions)} bound={envelopeBound} targetNames={targetNames} governingTemplate={t('results.governing')} />
           : <ReactionTable model={model} result={result} />
       )}
 
@@ -174,10 +175,10 @@ const StaticResults: React.FC<{ activeTab: StaticTab }> = ({ activeTab }) => {
   );
 };
 
-function useEffectiveReactions(model: ProjectModel, reactions: number[]) {
+function useEffectiveReactions(model: ProjectModel, result: AnalysisResult) {
   return useMemo(
-    () => buildEffectiveReactionRows(model, reactions),
-    [model, reactions]
+    () => buildEffectiveReactionRows(model, result.reactions, result.displacements),
+    [model, result]
   );
 }
 
@@ -191,30 +192,40 @@ const EnvelopeValueCell: React.FC<{
   const values = bound === 'min' ? envelope.min : envelope.max;
   const targetIds = bound === 'min' ? envelope.minTargetIds : envelope.maxTargetIds;
   const targetId = targetIds[index];
-  const targetName = targetId ? targetNames.get(targetId) ?? targetId : '';
+  const targetName = targetId
+    ? targetNames.has(targetId) ? `${targetNames.get(targetId)} [${targetId}]` : targetId
+    : '';
   return <td title={targetName ? governingTemplate.replace('{target}', targetName) : undefined}>
     <span>{fmt(values[index])}</span>
     {targetName && <small className="envelope-target">{targetName}</small>}
   </td>;
 };
 
-const EnvelopeNodeTable: React.FC<{
+const EnvelopeReactionTable: React.FC<{
   model: ProjectModel;
   envelope: SerializedComponentEnvelope<number[]>;
   bound: 'min' | 'max';
   targetNames: ReadonlyMap<string, string>;
-  labels: readonly string[];
   governingTemplate: string;
-}> = ({ model, envelope, bound, targetNames, labels, governingTemplate }) => {
+}> = ({ model, envelope, bound, targetNames, governingTemplate }) => {
   const t = useT();
+  const labels = ['Rx', 'Ry', 'Rz', 'Mx', 'My', 'Mz'];
+  const { rows, hasSharedReactions } = buildPhysicalSupportReactionRows(model, envelope[bound]);
+  const nodeIndices = new Map(model.nodes.map((node, index) => [node.id, index]));
   return <div className="table-wrapper">
     <table>
       <thead><tr><th>{t('results.node')}</th>{labels.map((label) => <th key={label}>{label}</th>)}</tr></thead>
-      <tbody>{model.nodes.map((node, nodeIndex) => <tr key={node.id}>
-        <td>{nodeLabel(node)}</td>
-        {labels.map((label, component) => <EnvelopeValueCell key={label} envelope={envelope} index={nodeIndex * 6 + component} bound={bound} targetNames={targetNames} governingTemplate={governingTemplate} />)}
-      </tr>)}</tbody>
+      <tbody>{rows.map((row) => {
+        const nodeIndex = nodeIndices.get(row.nodeId)!;
+        return <tr key={row.nodeId}>
+          <td>{nodeLabel(model.nodes[nodeIndex])}</td>
+          {row.cells.map((cell, component) => cell.value === null
+            ? <td key={component}>{cell.isShared ? t('results.coupledShared') : '-'}</td>
+            : <EnvelopeValueCell key={component} envelope={envelope} index={nodeIndex * 6 + component} bound={bound} targetNames={targetNames} governingTemplate={governingTemplate} />)}
+        </tr>;
+      })}</tbody>
     </table>
+    {hasSharedReactions && <div className="warning-text">{t('results.coupledReactionNote')}</div>}
   </div>;
 };
 
@@ -223,7 +234,7 @@ const ReactionTable: React.FC<{
   result: AnalysisResult;
 }> = ({ model, result }) => {
   const t = useT();
-  const { rows, hasSharedReactions, hasInvalidCouplings } = useEffectiveReactions(model, result.reactions);
+  const { rows, hasSharedReactions, hasInvalidCouplings } = useEffectiveReactions(model, result);
   const nodeById = new Map(model.nodes.map((node) => [node.id, node]));
 
   return (

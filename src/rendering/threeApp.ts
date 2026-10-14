@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { downloadBlob } from '../app/browserFiles';
 import type { AnalysisResult, ProjectModel } from '../core/model/types';
 import {
   isForceDiagramMode,
@@ -20,6 +21,9 @@ import {
 } from './constants';
 import { hasOpenModalDialog, pickMember, pickNode } from './interactionHelpers';
 import { LabelOverlay } from './labelOverlay';
+import { CAMERA_MOUSE_BUTTONS } from './cameraControls';
+import { resolveViewportLoads, type LoadPresentation } from './loadPresentation';
+import { getSupportPresentations, type SupportPresentation } from './supportPresentation';
 import {
   createWorkPlane,
   normalCoordinate,
@@ -86,6 +90,8 @@ export class ThreeApp {
   private hoveredMemberId: string | null = null;
 
   private model: ProjectModel | null = null;
+  private loadPresentation: LoadPresentation | null = null;
+  private supportPresentations: SupportPresentation[] = [];
   private result: AnalysisResult | null = null;
   /** Unit-normalized eigenmode shown in `modeShape` display mode. */
   private modeShape: AnalysisResult | null = null;
@@ -131,6 +137,7 @@ export class ThreeApp {
     this.labelOverlay = new LabelOverlay(container);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.mouseButtons = { ...CAMERA_MOUSE_BUTTONS };
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.1;
     this.controls.screenSpacePanning = true;
@@ -167,6 +174,7 @@ export class ThreeApp {
   private animate = (): void => {
     this.animationId = requestAnimationFrame(this.animate);
     this.controls.update();
+    this.updateSupportScale();
     if (this.animateDeformation && this.deformationGeometry) {
       this.deformationAnimationFactor = Math.sin(performance.now() / 650);
       this.updateDeformation();
@@ -202,6 +210,8 @@ export class ThreeApp {
 
   setModel(model: ProjectModel): void {
     this.model = model;
+    this.supportPresentations = getSupportPresentations(model);
+    this.loadPresentation = resolveViewportLoads(model, { kind: 'editing' });
     const bounds = new THREE.Box3();
     for (const node of model.nodes) bounds.expandByPoint(new THREE.Vector3(node.x, node.y, node.z));
     this.modelExtent = bounds.isEmpty() ? 1 : Math.max(bounds.getSize(new THREE.Vector3()).length(), 1e-9);
@@ -220,6 +230,11 @@ export class ThreeApp {
   setResult(result: AnalysisResult | null): void {
     this.result = result;
     this.rebuildResults();
+  }
+
+  setLoadPresentation(presentation: LoadPresentation): void {
+    this.loadPresentation = presentation;
+    this.rebuildLoads();
   }
 
   setModeShape(shape: AnalysisResult | null): void {
@@ -338,26 +353,28 @@ export class ThreeApp {
     this.controls.update();
   }
 
-  capturePngDataUrl(): string {
+  private captureCanvas(): HTMLCanvasElement | null {
+    this.updateSupportScale();
     this.renderer.render(this.scene, this.camera);
     this.drawLabels();
     const canvas = document.createElement('canvas');
     canvas.width = this.renderer.domElement.width;
     canvas.height = this.renderer.domElement.height;
     const context = canvas.getContext('2d');
-    if (!context) return '';
+    if (!context) return null;
     context.drawImage(this.renderer.domElement, 0, 0);
     this.labelOverlay.drawOnto(context);
-    return canvas.toDataURL('image/png');
+    return canvas;
+  }
+
+  capturePngDataUrl(): string {
+    return this.captureCanvas()?.toDataURL('image/png') ?? '';
   }
 
   downloadPng(filename = 'frame-viewer.png'): void {
-    const url = this.capturePngDataUrl();
-    if (!url) return;
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.click();
+    this.captureCanvas()?.toBlob((blob) => {
+      if (blob) downloadBlob(filename, blob);
+    }, 'image/png');
   }
 
   private get highlights(): GeometryHighlightState {
@@ -387,7 +404,19 @@ export class ThreeApp {
 
   private rebuildLoads(): void {
     clearGroup(this.loadGroup);
-    if (this.model) populateLoads(this.loadGroup, this.model);
+    if (this.loadPresentation?.model) populateLoads(this.loadGroup, this.loadPresentation.model, { resolved: true });
+  }
+
+  private updateSupportScale(): void {
+    const height = Math.max(this.container.clientHeight, 1);
+    const cameraPosition = this.camera.position;
+    const cameraDirection = this.camera.getWorldDirection(new THREE.Vector3());
+    const pixelFactor = 2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) / height;
+    for (const marker of this.supportGroup.children) {
+      const depth = marker.position.clone().sub(cameraPosition).dot(cameraDirection);
+      marker.scale.setScalar(Math.max(depth, this.camera.near) * pixelFactor);
+      marker.quaternion.copy(this.camera.quaternion);
+    }
   }
 
   private rebuildResults(): void {
@@ -434,6 +463,9 @@ export class ThreeApp {
       isDark: this.isDark,
       showNodeLabels: this.showNodeLabels,
       showMemberLabels: this.showMemberLabels,
+      showSupports: this.supportGroup.visible,
+      supports: this.supportPresentations,
+      loadCaption: this.loadGroup.visible ? this.loadPresentation?.caption ?? '' : '',
       labelMode: this.labelMode,
       selectedNodeIds: this.selectedNodeIds,
       selectedMemberIds: this.selectedMemberIds,

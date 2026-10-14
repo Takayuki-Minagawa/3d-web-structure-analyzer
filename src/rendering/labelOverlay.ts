@@ -6,6 +6,7 @@ import { isForceDiagramMode, type DisplayMode, type LabelMode } from '../state/v
 import { LABEL_FONT, THEME_COLORS } from './constants';
 import { projectToScreen } from './interactionHelpers';
 import { getDiagramLabelPosition, getDiagramValue } from './resultGeometry';
+import type { SupportPresentation } from './supportPresentation';
 
 interface LabelRectangle {
   left: number;
@@ -23,6 +24,9 @@ export interface LabelDrawOptions {
   isDark: boolean;
   showNodeLabels: boolean;
   showMemberLabels: boolean;
+  showSupports: boolean;
+  supports: readonly SupportPresentation[];
+  loadCaption: string;
   labelMode: LabelMode;
   selectedNodeIds: ReadonlySet<string>;
   selectedMemberIds: ReadonlySet<string>;
@@ -64,16 +68,76 @@ export class LabelOverlay {
     if (!options.model) return;
 
     const diagramLabelsVisible = options.result && isForceDiagramMode(options.displayMode);
-    if (!options.showNodeLabels && !options.showMemberLabels && !diagramLabelsVisible) return;
-
     const colors = options.isDark ? THEME_COLORS.dark : THEME_COLORS.light;
     this.context.font = LABEL_FONT;
     this.context.textAlign = 'center';
     this.context.textBaseline = 'bottom';
 
+    this.drawLoadCaption(options.loadCaption, colors.labelBackground, colors.labelDiagram);
     if (options.showNodeLabels) this.drawNodeLabels(options, colors.labelNode);
+    if (options.showSupports) this.drawSupportLabels(options, colors.labelBackground, colors.labelNode);
     if (options.showMemberLabels) this.drawMemberLabels(options, colors.labelMember);
     if (diagramLabelsVisible) this.drawDiagramLabels(options, colors.labelBackground, colors.labelDiagram);
+  }
+
+  private drawLoadCaption(caption: string, background: string, color: string): void {
+    if (!caption) return;
+    const lines: string[] = [];
+    const maxWidth = Math.max(40, this.cssWidth - 24);
+    let line = '';
+    for (const character of caption.replace(/\s+/g, ' ')) {
+      if (line && this.context.measureText(line + character).width > maxWidth) {
+        lines.push(line);
+        line = '';
+      }
+      line += character;
+    }
+    if (line) lines.push(line);
+    const top = this.cssHeight - 10 - lines.length * 15;
+    this.context.save();
+    this.context.textAlign = 'left';
+    this.context.textBaseline = 'top';
+    this.context.fillStyle = background;
+    this.context.fillRect(6, top - 4, this.cssWidth - 12, lines.length * 15 + 8);
+    this.context.fillStyle = color;
+    lines.forEach((text, index) => this.context.fillText(text, 12, top + index * 15));
+    this.context.restore();
+    this.occupied.push({ left: 6, right: this.cssWidth - 6, top: top - 4, bottom: this.cssHeight - 6 });
+  }
+
+  private drawSupportLabels(options: LabelDrawOptions, background: string, color: string): void {
+    this.context.save();
+    this.context.textAlign = 'center';
+    this.context.textBaseline = 'top';
+    for (const support of options.supports) {
+      const selected = options.selectedNodeIds.has(support.node.id);
+      if (options.labelMode === 'selected' && !selected) continue;
+      const screen = projectToScreen(new THREE.Vector3(support.node.x, support.node.y, support.node.z), options.camera, this.cssWidth, this.cssHeight);
+      // Only clamp labels for visible supports; an offscreen support must not
+      // leave a detached label at the edge or hide another support's label.
+      if (!screen || screen.x < 0 || screen.x > this.cssWidth || screen.y < 0 || screen.y > this.cssHeight) continue;
+      const lines: string[] = [];
+      let current = '';
+      const maxWidth = Math.min(300, Math.max(40, this.cssWidth - 24));
+      for (const part of support.label.split(' · ')) {
+        if (current && this.context.measureText(`${current} · ${part}`).width > maxWidth) {
+          lines.push(current);
+          current = '';
+        }
+        current = current ? `${current} · ${part}` : part;
+      }
+      if (current) lines.push(current);
+      const width = Math.max(...lines.map((line) => this.context.measureText(line).width)) + 8;
+      const x = Math.max(width / 2 + 4, Math.min(screen.x, this.cssWidth - width / 2 - 4));
+      const y = screen.y + 25;
+      const height = lines.length * 15;
+      if (!this.claimRectangle({ left: x - width / 2, right: x + width / 2, top: y, bottom: y + height }, options.labelMode === 'all' || selected)) continue;
+      this.context.fillStyle = background;
+      this.context.fillRect(x - width / 2, y, width, height);
+      this.context.fillStyle = color;
+      lines.forEach((line, index) => this.context.fillText(line, x, y + 1 + index * 15));
+    }
+    this.context.restore();
   }
 
   private drawNodeLabels(options: LabelDrawOptions, color: string): void {

@@ -15,6 +15,7 @@ import { useSelectionStore } from '../state/selectionStore';
 import { useT, useI18nStore } from '../i18n';
 import type { ProjectFile } from '../core/model/types';
 import { saveProject, loadProjectWithReport } from '../persistence/indexedDb';
+import { createAutosaveController, type AutosaveStatus } from '../persistence/autosaveController';
 import { redoProject, undoProject } from '../state/projectStore';
 import { generatePortalFrameTemplate } from '../core/model/generators';
 import { CURRENT_PROJECT_SCHEMA_VERSION } from '../io/projectFileParser';
@@ -28,7 +29,11 @@ import { downloadText, pickTextFile, printHtmlInNewWindow } from './browserFiles
 import { useAnalysisWorker } from './useAnalysisWorker';
 
 export const App: React.FC = () => {
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autosaveRef = useRef<ReturnType<typeof createAutosaveController> | null>(null);
+  const retryAutosaveRef = useRef<() => void>(() => undefined);
+  const saveCurrentRef = useRef<() => void>(() => undefined);
+  const [autosave, setAutosave] = useState<AutosaveStatus>({ phase: 'restoring' });
+  const [propertiesOpen, setPropertiesOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [initialGenerator, setInitialGenerator] = useState(false);
@@ -70,32 +75,71 @@ export const App: React.FC = () => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
-  // Auto-save with debounce
   useEffect(() => {
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      saveProject(model).catch(() => {/* ignore save errors */});
-    }, 800);
-    return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    };
-  }, [model]);
+    document.documentElement.lang = lang;
+  }, [lang]);
 
-  // Load saved project on startup
+  // Subscribe immediately, but never save until restoration has completed.
   useEffect(() => {
-    loadProjectWithReport().then((saved) => {
-      if (saved) {
-        loadModel(saved.model);
-        if (saved.warnings.length > 0) setImportReport(saved);
-      }
-      else {
-        setInitialGenerator(true);
-        setGeneratorOpen(true);
-      }
-    }).catch(() => {
-      setInitialGenerator(true);
-      setGeneratorOpen(true);
+    let cancelled = false;
+    let restored = false;
+    let restoreGeneration = 0;
+    const initialModel = useProjectStore.getState().model;
+    const controller = createAutosaveController(saveProject, setAutosave);
+    autosaveRef.current = controller;
+    const unsubscribe = useProjectStore.subscribe((state, previous) => {
+      if (state.model !== previous.model) controller.update(state.model);
     });
+    const restore = async () => {
+      const generation = ++restoreGeneration;
+      setAutosave({ phase: 'restoring' });
+      try {
+        const saved = await loadProjectWithReport();
+        if (cancelled || generation !== restoreGeneration) return;
+        // An import or edit during a slow read takes precedence over autosave.
+        if (useProjectStore.getState().model === initialModel) {
+          if (saved) {
+            loadModel(saved.model);
+            if (saved.warnings.length > 0) setImportReport(saved);
+          } else {
+            setInitialGenerator(true);
+            setGeneratorOpen(true);
+          }
+        }
+        restored = true;
+        controller.restored();
+        controller.update(useProjectStore.getState().model);
+      } catch (error) {
+        if (!cancelled && generation === restoreGeneration) controller.restoreFailed(error);
+      }
+    };
+    retryAutosaveRef.current = () => { void (restored ? controller.retry() : restore()); };
+    saveCurrentRef.current = () => {
+      restoreGeneration++;
+      restored = true;
+      controller.update(useProjectStore.getState().model);
+      void controller.retry();
+    };
+    void restore();
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') void controller.flush();
+    };
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (controller.hasPending()) {
+        void controller.flush();
+        event.preventDefault();
+        event.returnValue = '';
+      }
+    };
+    document.addEventListener('visibilitychange', flushWhenHidden);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      controller.dispose();
+      document.removeEventListener('visibilitychange', flushWhenHidden);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
   }, [loadModel, setImportReport]);
 
   useEffect(() => {
@@ -195,8 +239,8 @@ export const App: React.FC = () => {
     pickTextFile('.json', (text) => {
       try {
         importText(text);
-      } catch {
-        alert(t('app.importError'));
+      } catch (error) {
+        alert(`${t('app.importError')}\n${error instanceof Error ? error.message : String(error)}`);
       }
     });
   }, [importText, t]);
@@ -217,7 +261,7 @@ export const App: React.FC = () => {
   }, [loadModel, importText, clearSelection]);
 
   return (
-    <div className="app-layout">
+    <div className={`app-layout${propertiesOpen ? ' properties-open' : ''}`}>
       <div className="top-bar">
         <span className="app-title">{t('app.title')}</span>
         <div className="top-actions">
@@ -229,6 +273,7 @@ export const App: React.FC = () => {
           <button onClick={() => void handlePrintReport()}>{t('app.reportPdf')}</button>
           <button onClick={() => window.dispatchEvent(new Event('frame-viewer:screenshot'))}>{t('app.reportPng')}</button>
           <button onClick={() => { clearSelection(); resetModel(); setInitialGenerator(true); setGeneratorOpen(true); }}>{t('app.new')}</button>
+          <button className="properties-toggle" aria-expanded={propertiesOpen} onClick={() => setPropertiesOpen(!propertiesOpen)}>{t('app.properties')}</button>
           <button className="top-icon-btn" onClick={toggleTheme} title={theme === 'dark' ? t('theme.light') : t('theme.dark')}>
             {theme === 'dark' ? '☀' : '☾'}
           </button>
@@ -239,6 +284,15 @@ export const App: React.FC = () => {
             ?
           </button>
         </div>
+      </div>
+      <div className={`autosave-status ${autosave.phase}`} role="status" aria-live="polite">
+        <span>{t(`save.${autosave.phase}`)}{autosave.lastSavedAt ? ` · ${new Date(autosave.lastSavedAt).toLocaleTimeString(lang)}` : ''}</span>
+        {autosave.phase === 'error' && <>
+          <span>{autosave.error}</span>
+          <button onClick={() => retryAutosaveRef.current()}>{t('save.retry')}</button>
+          <button onClick={() => saveCurrentRef.current()}>{t('save.current')}</button>
+          <button onClick={handleExport}>{t('app.export')}</button>
+        </>}
       </div>
       <div className="main-area">
         <Toolbar onRunAnalysis={analysis.run} onCancelAnalysis={analysis.cancel} isAnalyzing={isAnalyzing} onOpenGenerator={() => { setInitialGenerator(false); setGeneratorOpen(true); }} onOpenTables={() => setTablesOpen(true)} onOpenDiagnostics={() => setDiagnosticsOpen(true)} />

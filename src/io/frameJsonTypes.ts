@@ -90,7 +90,8 @@ export interface FrameJsonMaterial {
   young: number;  // kN/cm^2
   shear: number;  // kN/cm^2
   expansion: number;
-  poisson: number;
+  /** Omitted values are defaulted by the converter; an explicit zero is valid. */
+  poisson?: number;
   unitLoad: number;
   name: string;
 }

@@ -8,6 +8,7 @@ import { useT } from '../../../i18n';
 import { useProjectStore, type AnalysisModeUpdateResult } from '../../../state/projectStore';
 import { useSelectionStore } from '../../../state/selectionStore';
 import { useViewStore, type EigenDivisions } from '../../../state/viewStore';
+import { selectLoadTarget } from './loadTargetSelection';
 
 export const AnalysisSettingsEditor: React.FC = () => {
   const t = useT();
@@ -74,7 +75,7 @@ export const LoadCasesEditor: React.FC = () => {
   const activeCase = getActiveLoadCaseId(model);
   const target = model.activeLoadCombinationId ? `combo:${model.activeLoadCombinationId}` : `case:${activeCase}`;
   return <div className="project-editor">
-    <div className="prop-row"><label>{t('prop.analysisTarget')}</label><select value={target} onChange={(event) => { const [kind, id] = event.target.value.split(':'); if (kind === 'combo') setActiveLoadCombination(id ?? null); else if (id) setActiveLoadCase(id); }}>
+    <div className="prop-row"><label>{t('prop.analysisTarget')}</label><select value={target} onChange={(event) => selectLoadTarget(event.target.value, { setActiveLoadCase, setActiveLoadCombination })}>
       {cases.map((loadCase) => <option key={loadCase.id} value={`case:${loadCase.id}`}>{t('prop.loadCase')} {loadCase.name}</option>)}
       {combinations.map((combo) => <option key={combo.id} value={`combo:${combo.id}`}>{t('prop.loadCombination')} {combo.name}</option>)}
     </select></div>

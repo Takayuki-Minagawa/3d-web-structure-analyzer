@@ -67,6 +67,7 @@ export function toStaticOutcome(response: AnalyzeAllSuccess): StaticAnalysisOutc
       target: result.target,
       displacements: Array.from(result.displacements),
       reactions: Array.from(result.reactions),
+      ...(result.supportReactions ? { supportReactions: Array.from(result.supportReactions) } : {}),
       elementEndForces: plainRecord(result.elementEndForces),
       diagrams: result.diagrams,
       warnings: result.warnings,
@@ -74,6 +75,7 @@ export function toStaticOutcome(response: AnalyzeAllSuccess): StaticAnalysisOutc
     envelope: {
       displacements: plainEnvelope(response.envelope.displacements),
       reactions: plainEnvelope(response.envelope.reactions),
+      ...(response.envelope.supportReactions ? { supportReactions: plainEnvelope(response.envelope.supportReactions) } : {}),
       elementEndForces: Object.fromEntries(
         Object.entries(response.envelope.elementEndForces)
           .map(([memberId, component]) => [memberId, plainEnvelope(component)]),

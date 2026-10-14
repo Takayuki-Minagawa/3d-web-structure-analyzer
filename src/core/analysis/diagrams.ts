@@ -158,6 +158,24 @@ function integrateDeflection(
   return positions.map((x, i) => startValue + startSlope * x + bending[i]! + shear[i]!);
 }
 
+/** Integrate axial strain on intervals split at every applied-load boundary. */
+function integrateAxialDisplacement(
+  positions: readonly number[],
+  L: number,
+  startValue: number,
+  endValue: number,
+  strain: (x: number) => number,
+): number[] {
+  const integral = [0];
+  for (let i = 1; i < positions.length; i++) {
+    integral.push(integral[i - 1]! + integrateGauss3(positions[i - 1]!, positions[i]!, strain));
+  }
+  // Enforce nodal compatibility, including prescribed translations and thermal
+  // strains. A constant correction preserves the span-load displacement shape.
+  const correction = L > 0 ? (endValue - startValue - integral[integral.length - 1]!) / L : 0;
+  return positions.map((x, i) => startValue + integral[i]! + correction * x);
+}
+
 /**
  * Generate section force diagrams for a single 3D member.
  *
@@ -228,13 +246,18 @@ export function generateDiagram(
     ? interpolateNodalDeflection(member, positions, dLocal)
     : integrateSectionDeflection(member, positions, dLocal, sectionForcesAt);
 
+  const thermalStrain = memberLoads.reduce((sum, load) => sum
+    + (load.type === 'temperature' ? (member.expansion ?? 0) * load.value : 0), 0);
+  const axial = integrateAxialDisplacement(
+    positions, L, dLocal[0]!, dLocal[6]!,
+    (x) => sectionForcesAt(x).N / (member.E * member.A) + thermalStrain,
+  );
+
   const points: DiagramPoint[] = positions.map((x, index) => {
-    const xi = L > 0 ? x / L : 0;
     return {
       x,
       ...sectionForcesAt(x),
-      // Axial: linear
-      ux: dLocal[0]! * (1 - xi) + dLocal[6]! * xi,
+      ux: axial[index]!,
       uy: deflection.uy[index]!,
       uz: deflection.uz[index]!,
     };

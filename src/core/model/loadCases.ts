@@ -7,6 +7,7 @@ import type {
   PrescribedDisplacement,
   ProjectModel,
   AnalysisTarget,
+  AnalysisError,
 } from './types';
 import { DOF_NAMES } from './restraints';
 
@@ -27,17 +28,20 @@ export function getLoadCombinations(model: ProjectModel): LoadCombination[] {
 export function getActiveLoadCaseId(model: ProjectModel): LoadCaseId {
   const cases = getLoadCases(model);
   const active = model.activeLoadCaseId;
-  return active && cases.some((loadCase) => loadCase.id === active)
-    ? active
-    : cases[0]!.id;
+  if (active !== undefined && !cases.some((loadCase) => loadCase.id === active)) {
+    throw new Error(`activeLoadCaseId: 未知の荷重ケース "${active}"。`);
+  }
+  return active ?? cases[0]!.id;
 }
 
 export function getActiveLoadCombination(
   model: ProjectModel
 ): LoadCombination | null {
   const activeId = model.activeLoadCombinationId;
-  if (!activeId) return null;
-  return getLoadCombinations(model).find((combo) => combo.id === activeId) ?? null;
+  if (activeId === undefined || activeId === null) return null;
+  const combination = getLoadCombinations(model).find((combo) => combo.id === activeId);
+  if (!combination) throw new Error(`activeLoadCombinationId: 未知の荷重組合せ "${activeId}"。`);
+  return combination;
 }
 
 export function getLoadCaseIdForLoad(
@@ -46,9 +50,48 @@ export function getLoadCaseIdForLoad(
 ): LoadCaseId {
   const cases = getLoadCases(model);
   const fallback = cases[0]!.id;
-  return load.loadCaseId && cases.some((loadCase) => loadCase.id === load.loadCaseId)
-    ? load.loadCaseId
-    : fallback;
+  if (load.loadCaseId !== undefined && !cases.some((loadCase) => loadCase.id === load.loadCaseId)) {
+    throw new Error(`loadCaseId: 未知の荷重ケース "${load.loadCaseId}"。`);
+  }
+  return load.loadCaseId ?? fallback;
+}
+
+/** Omitted IDs retain the legacy default; explicit unknown IDs never do. */
+export function validateLoadReferences(model: ProjectModel): AnalysisError[] {
+  const errors: AnalysisError[] = [];
+  const fail = (path: string, message: string) => errors.push({ type: 'validation', message: `${path}: ${message}` });
+  const cases = getLoadCases(model);
+  const combinations = getLoadCombinations(model);
+  const caseIds = new Set(cases.map((item) => item.id));
+  const targetIds = new Set<string>();
+  for (const [group, items] of [['loadCases', cases], ['loadCombinations', combinations]] as const) {
+    items.forEach((item, index) => {
+      if (!item.id || targetIds.has(item.id)) fail(`${group}[${index}].id`, `空または重複した対象ID "${item.id}"。`);
+      targetIds.add(item.id);
+    });
+  }
+  const checkCase = (id: string | undefined, path: string) => {
+    if (id !== undefined && !caseIds.has(id)) fail(path, `未知の荷重ケース "${id}"。候補: ${[...caseIds].join(', ')}`);
+  };
+  checkCase(model.activeLoadCaseId, 'activeLoadCaseId');
+  if (model.activeLoadCombinationId != null && !combinations.some((item) => item.id === model.activeLoadCombinationId)) {
+    fail('activeLoadCombinationId', `未知の荷重組合せ "${model.activeLoadCombinationId}"。`);
+  }
+  for (const group of ['nodalLoads', 'memberLoads', 'prescribedDisplacements'] as const) {
+    (model[group] ?? []).forEach((load, index) => checkCase(load.loadCaseId, `${group}[${index}].loadCaseId`));
+  }
+  combinations.forEach((combo, index) => combo.factors.forEach((term, termIndex) => {
+    const path = `loadCombinations[${index}].factors[${termIndex}]`;
+    if (term.loadCaseId === undefined) fail(`${path}.loadCaseId`, '組合せ項には荷重ケースIDが必要です。');
+    else checkCase(term.loadCaseId, `${path}.loadCaseId`);
+    if (!Number.isFinite(term.factor)) fail(`${path}.factor`, '係数は有限値である必要があります。');
+  }));
+  return errors;
+}
+
+function assertLoadReferences(model: ProjectModel): void {
+  const error = validateLoadReferences(model)[0];
+  if (error) throw new Error(error.message);
 }
 
 /** Load-carrying part of a model for one analysis target. */
@@ -91,6 +134,7 @@ function loadSetForCombination(model: ProjectModel, combination: LoadCombination
 
 /** Build a load-only view for the active case or combination selected in the UI. */
 export function resolveAnalysisLoadModel(model: ProjectModel): ProjectModel {
+  assertLoadReferences(model);
   const activeCombination = getActiveLoadCombination(model);
   const loadSet = activeCombination
     ? loadSetForCombination(model, activeCombination)
@@ -119,7 +163,11 @@ export function resolveLoadTargetModel(
   model: ProjectModel,
   target: AnalysisTarget
 ): ProjectModel {
+  assertLoadReferences(model);
   if (target.type === 'loadCase') {
+    if (!getLoadCases(model).some((item) => item.id === target.id)) {
+      throw new Error(`targetId: 未知の荷重ケース "${target.id}"。`);
+    }
     return { ...model, ...loadSetForCase(model, target.id) };
   }
   const combination = getLoadCombinations(model).find((item) => item.id === target.id);

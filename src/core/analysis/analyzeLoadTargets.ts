@@ -12,6 +12,7 @@ import { validateModel } from '../model/validation';
 import { getAnalysisTargets, resolveLoadTargetModel } from '../model/loadCases';
 import { toAnalysisException } from './analysisError';
 import { prepareStaticSystem, solveStaticLoadSet } from './staticSolver';
+import { buildSupportReactionLayout, buildSupportReactionVector } from '../supportReactions';
 
 /** Swap the load-carrying fields of an indexed model for one analysis target. */
 export function indexedModelForTarget(
@@ -74,10 +75,15 @@ export function analyzeAllLoadTargets(model: ProjectModel): MultiTargetAnalysisO
 
   const indexed = buildIndexedModel(model);
   const system = prepareStaticSystem(indexed);
-  const results: AnalysisTargetResult[] = getAnalysisTargets(model).map((target) => ({
-    ...solveStaticLoadSet(system, indexedModelForTarget(indexed, model, target)),
-    target,
-  }));
+  const supportLayout = buildSupportReactionLayout(model);
+  const results: AnalysisTargetResult[] = getAnalysisTargets(model).map((target) => {
+    const result = solveStaticLoadSet(system, indexedModelForTarget(indexed, model, target));
+    return {
+      ...result,
+      target,
+      supportReactions: buildSupportReactionVector(model, result.reactions, result.displacements, supportLayout),
+    };
+  });
 
   const targetIds = results.map((result) => result.target.id);
   const elementEndForces = new Map<MemberId, ComponentEnvelope>();
@@ -96,6 +102,11 @@ export function analyzeAllLoadTargets(model: ProjectModel): MultiTargetAnalysisO
       ),
       reactions: createEnvelope(
         results.map((result) => result.reactions),
+        targetIds,
+        indexed.dofCount
+      ),
+      supportReactions: createEnvelope(
+        results.map((result) => result.supportReactions!),
         targetIds,
         indexed.dofCount
       ),
